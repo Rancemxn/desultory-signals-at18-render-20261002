@@ -1,0 +1,72 @@
+name: Refined continuous 1080p60 export
+on:
+  workflow_dispatch:
+    inputs:
+      bake_run:
+        description: Completed continuous bake run
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: refined-full-bake
+          path: output/full
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - run: python -u refined_task.py render ${{ matrix.part }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: refined-final-part-${{ matrix.part }}
+          path: |
+            delivery/part${{ matrix.part }}.mp4
+            delivery/part${{ matrix.part }}-*.json
+            output/part${{ matrix.part }}/*.log
+          retention-days: 7
+  assemble:
+    needs: render
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: refined-final-part-*
+          path: assembled
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: refined-full-bake
+          path: output/full
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - run: |
+          mkdir -p output/plan
+          gh release download refined-plan-v7 --pattern 'refinement-validation.json' --dir output/plan
+          python -u refined_task.py assemble
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: |
+          gh release create refined-1080p60 delivery/Desultory-Signals-AT18-1080p60-refined.mp4 delivery/validation.json delivery/pose-diagnostics.json delivery/pose-numeric.json delivery/DELIVERY.md --title 'Desultory Signals AT18 — refined 1080p60' --notes-file delivery/DELIVERY.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: refined-final-delivery
+          path: delivery
+          retention-days: 7

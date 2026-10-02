@@ -72,13 +72,16 @@
     "refine_assignments.py": "a276cb34026f3cd4300bc624708adb05a97582f8e01da1eff5e31a19ef3e2f8f",
     "finalize_refinement.py": "6661afd57d1245ea98f1eb334dcfe3942ab5b3d657ceee41bee64feba0e60aaa",
     "inspect_pose_numeric.py": "2f2bdd8f312788ba67cfea3fe6232a7965f4bac1abdfc80e90a8f0ff490ac9d1",
-    "refined_task.py": "f3023e1999b5fb7bc1a4d0d6075c916cae28286376d9c211e64862f82f9820fa",
+    "refined_task.py": "a98ac1e2ef00783da65fdc626830aec2dca706efab072a7dc7966c0e8b525202",
     "test_contact_refinement.py": "74a79faab81d5b4bd9f82dc9c0c40ac91959c24344dbac0dd7928151e9b8e3f1",
     "test_pose_transitions.py": "fe37b23aa59a7579d64d1980b7a113489d3048426b26b5f446f9ac23d95cf16c",
     "REFINEMENT.md": "7fa87e78e635dd0cb03ef19bf31174742a6589fc63825c0fb26bddbd7a7b8a95",
     ".github/workflows/refined-probes.yml": "04228b3e23d401320374d131418d09cb19023b4cb6cb19d57fc59dd3e673b7e1",
-    ".github/workflows/refined-bake.yml": "1edfe387daf01ad22f7fd56209de4231da3ed33b6c2be1a7c282b7a1e80ebb13"
+    ".github/workflows/refined-bake.yml": "1edfe387daf01ad22f7fd56209de4231da3ed33b6c2be1a7c282b7a1e80ebb13",
+    "slice_bake.py": "a511afea857a01c86441dab606ff3be41e0b7b5e06391c57d04c2f6969126c7e",
+    "test_refined_assignment.py": "d486672d0859c100f19aaba0e6d132fa145c528c3884c1c7b5e9ff1064fac135",
+    ".github/workflows/refined-final.yml": "b8ad989d875de70b32710412369a759878f0a85352f15f225af93ba675d655a8"
   },
   "isolation_note": "Task-specific snapshot; main project is not modified. Local relay scripts excluded.",
-  "refined_at": "2026-10-02T18:04:01.991073+00:00"
+  "refined_at": "2026-10-02T18:15:42.262111+00:00"
 }
