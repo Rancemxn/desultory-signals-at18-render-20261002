@@ -57,7 +57,7 @@ jobs:
           run-id: ${{ inputs.bake_run }}
       - run: |
           mkdir -p output/plan
-          gh release download refined-plan-v7 --pattern 'refinement-validation.json' --dir output/plan
+          gh release download refined-plan-v8 --pattern 'refinement-validation.json' --dir output/plan
           python -u refined_task.py assemble
         env:
           GH_TOKEN: ${{ github.token }}

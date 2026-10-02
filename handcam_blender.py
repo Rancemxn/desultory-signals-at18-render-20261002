@@ -131,9 +131,12 @@ def sample_times(job):
     start, end = job['start'], job['start'] + job['duration']
     times = {start + i / job['fps'] for i in range(-job['fps'], job['frames'])}
     phases = (.14, .25, .28, .5, .68, .75, .84) if job.get('palm_lift_mode') in ('accent', 'gentle') else (.14, .28, .5, .68, .84)
+    contract_times = set()
     for contact in job['contacts']:
-        times.update(t for t in (contact['start'], contact['end'], *(p[0] for p in contact['points']))
-                     if start - 1 <= t <= end)
+        event_times = {t for t in (contact['start'], contact['end'], *(p[0] for p in contact['points']))
+                       if start - 1 <= t <= end}
+        contract_times.update(event_times)
+        times.update(event_times)
         if contact.get('planned'):
             times.update(t for t in (contact['prepare'], contact['release_until']) if start - 1 <= t <= end)
     for gap in job.get('hand_rest', []):
@@ -155,7 +158,15 @@ def sample_times(job):
                                  if start - 1 <= (t := previous['end'] + u * gap) <= end)
     ordered = sorted(times)
     times.update((a + b) / 2 for a, b in zip(ordered, ordered[1:]) if b - a > 1 / 120)
-    return sorted(times)
+    # Equivalent event/phase expressions can differ by a few floating-point
+    # ulps. Do not run a second pose solve with effectively zero elapsed time.
+    # Preserve the exact PSAP event value when it shares such a sample.
+    canonical = {}
+    for t in sorted(times):
+        key = round(t*1e9)
+        if key not in canonical or t in contract_times:
+            canonical[key] = t
+    return [canonical[key] for key in sorted(canonical)]
 
 
 def assign_contacts(job, offsets):
@@ -756,6 +767,33 @@ def main(job):
     from handcam_avoidance import PoseAvoidance
     avoidance = PoseAvoidance(rigs, targets, FINGERS,
         motion_limits=job.get('avoidance_motion_limits',dict(wrist_speed=.18,max_wrist_shift=.025))) if job.get('pose_avoidance', True) else None
+    airborne_floor_corrections = 0
+
+    def clear_airborne_skin(samples,pads,t):
+        """Keep inactive distal skin above the screen without moving held targets."""
+        nonlocal airborne_floor_corrections
+        if avoidance is None:
+            return pads
+        for _ in range(3):
+            changed = False
+            for key,pad in pads.items():
+                if samples[key][2]:
+                    continue
+                events = tracks[key]
+                at = bisect.bisect_right(events,t,key=lambda c:c['start'])-1
+                previous = events[at] if at>=0 else None
+                following = events[at+1] if at+1<len(events) else None
+                release = smooth((t-previous['end'])/.08) if previous else 1.
+                landing = smooth((following['start']-t)/.08) if following else 1.
+                floor = job['contact_height']+.0075*release*landing
+                if pad.z < floor-.0001:
+                    avoidance.move_finger(key,Vector((0.,0.,min(.012,floor-pad.z))),samples)
+                    airborne_floor_corrections += 1
+                    changed = True
+            if not changed:
+                break
+            pads = fit_skin(samples,range(2))
+        return pads
     palm_bones = {(side, arm.pose.bones[chain[0]].parent.name): arm.pose.bones[chain[0]].parent
                   for side, arm in rigs.items() for chain in FINGERS.values()}
     palm_rest = {key: bone.matrix_basis.to_euler('XYZ') for key, bone in palm_bones.items()}
@@ -860,10 +898,17 @@ def main(job):
             active = [(Vector(pos) - offsets[k]) for k, (pos, _, down) in samples.items() if k[0] == side and down]
             aiming = [(Vector(pos), weight) for k, (pos, weight, _) in samples.items()
                       if k[0] == side and weight > .001]
+            wanted = yaw[side]
             if aiming and (not job.get('motion_plan_version') or natural_palm):
                 aim = sum((p * w for p, w in aiming), Vector()) / sum(w for _, w in aiming)
                 wanted = max(-.45, min(.45, -math.atan2(aim.x - side * .12, max(.08, aim.y + .24))))
-                yaw[side] += (wanted - yaw[side]) * (1 - math.exp(-10 * dt))
+            for guide in job.get('pose_guides',[]):
+                if guide['hand'] != ('left' if side==-1 else 'right') or not guide['prepare']<=t<=guide['release']:
+                    continue
+                weight = (smooth((t-guide['prepare'])/max(1e-6,guide['start']-guide['prepare'])) if t<guide['start'] else
+                          smooth((guide['release']-t)/max(1e-6,guide['release']-guide['end'])) if t>guide['end'] else 1.)
+                wanted += (guide['yaw']-wanted)*weight
+            yaw[side] += (wanted-yaw[side])*(1-math.exp(-10*dt))
             rotation = Matrix.Rotation(yaw[side], 3, 'Z')
             for key in offsets:
                 if key[0] == side:
@@ -936,9 +981,19 @@ def main(job):
                 # its neighbours while another finger controls this hand.
                 pos, weight, down = samples[key]
                 pos = Vector(pos)
-                pos.x = max(rest.x - .012, min(rest.x + .012, pos.x))
-                pos.y = max(rest.y - .025, min(rest.y + .025, pos.y))
-                samples[key] = (pos, weight, down)
+                clamped = pos.copy()
+                clamped.x = max(rest.x - .012, min(rest.x + .012, pos.x))
+                clamped.y = max(rest.y - .025, min(rest.y + .025, pos.y))
+                events = tracks[key]
+                at = bisect.bisect_right(events,t,key=lambda c:c['start'])-1
+                previous = events[at] if at>=0 else None
+                following = events[at+1] if at+1<len(events) else None
+                landing = smooth(1-(following['start']-t)/.12) if following else 0.
+                release = smooth(1-(t-previous['end'])/.12) if previous else 0.
+                # Removing the clamp only at DOWN caused a target discontinuity
+                # and a missed first contact. Blend it out before landing and
+                # back in after release, preserving both contact endpoints.
+                samples[key] = (clamped.lerp(pos,max(landing,release)),weight,down)
             # Unused fingers keep their relaxed joints; fingertip-only IK can fold them arbitrarily.
             influence = samples[key][1]
             if job.get('finger_motion') == 'whole_finger' and key[1] == 'thumb' and not samples[key][2]:
@@ -979,6 +1034,7 @@ def main(job):
             target.location = Vector(samples[key][0]) - pad_offsets[key]
         refinement_steps = solve_steps()
         pads = fit_skin(samples)
+        pads = clear_airborne_skin(samples,pads,t)
         if avoidance:
             pads = avoidance.prepare(roots, samples, dt, pads, lambda values: fit_skin(values, range(3)))
             pads, corrections = avoidance.resolve(roots, samples, pads,
@@ -1010,6 +1066,7 @@ def main(job):
                     motion_stats['max_wrist_lateral_speed_mps'],math.hypot(actual.x,actual.y)/dt)
         if bounded:
             pads = fit_skin(samples,range(4))
+        pads = clear_airborne_skin(samples,pads,t)
         for _ in range(0 if avoidance else (3 if job.get('motion_plan_version') else 2)):
             collisions = hand_collisions(rigs, collider_templates)
             if not collisions:
@@ -1110,6 +1167,7 @@ def main(job):
                 'pose_avoidance': avoidance.stats if avoidance else None,
                 'fitting_stats': fitting_stats,
                 'motion_stats': motion_stats,
+                'airborne_floor_corrections': airborne_floor_corrections,
                 'static_geometry_cache': dict(meshes=len(static_geometry), initial_pad_error_mm=cache_error * 1000),
                 'motion_index': motion_index is not None,
                 'bulk_geometry': job.get('bake_bulk_geometry', True),

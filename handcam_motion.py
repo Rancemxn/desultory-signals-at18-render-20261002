@@ -160,6 +160,16 @@ def attach_plan(content, contacts, plan, time_offset=0.):
                 or any(len(p) != 4 or not all(math.isfinite(v) for v in p) for p in knots)
                 or any(a[0] >= b[0] for a, b in zip(knots, knots[1:]))):
             raise ValueError('Invalid wrist rest trajectory in motion plan')
+    for guide in plan.get('pose_guides',[]):
+        if (guide.get('hand') not in ('left','right') or
+                any(not isinstance(guide.get(k),(int,float)) or not math.isfinite(guide[k])
+                    for k in ('prepare','start','end','release','yaw')) or
+                not guide['prepare']<=guide['start']<guide['end']<=guide['release'] or abs(guide['yaw'])>.65):
+            raise ValueError('Invalid authored palm orientation guide')
+    for name,value in plan.get('pose_style',{}).items():
+        maximum = {'palm_lift_low':.1,'palm_lift_high':.1,'palm_strike_speed':5.,'transfer_sway':.05}.get(name)
+        if maximum is None or not isinstance(value,(float,int)) or not math.isfinite(value) or not 0<=value<=maximum:
+            raise ValueError('Invalid authored pose style')
     records = plan.get('contacts', [])
     if len(records) != len(contacts):
         raise ValueError('Motion plan contact count differs from PSAP')

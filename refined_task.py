@@ -50,6 +50,7 @@ def bake(out,start,duration):
         'min_screen_clearance_mm':diagnostics['min_screen_clearance_mm'],
         'collision_samples':len(diagnostics['collision_errors']),
         'finger_order_samples':len(report['finger_order_violations']),
+        'mesh_intersection_samples':len(report['mesh_intersections']),
         'max_wrist_speed_mps':max((x['lateral_speed_mps'] for x in report['worst_wrist_steps']),default=0),
         'max_joint_step_degrees':max((x['step_degrees'] for x in report['worst_joint_steps']),default=0)}),flush=True)
 
@@ -117,6 +118,7 @@ def assemble():
         'max_collision_depth_mm':diagnostics['max_collision_depth_mm'],
         'min_screen_clearance_mm':diagnostics['min_screen_clearance_mm'],
         'finger_order_samples':len(numeric['finger_order_violations']),
+        'mesh_intersection_samples':len(numeric['mesh_intersections']),
         'max_wrist_lateral_speed_mps':max((x['lateral_speed_mps'] for x in numeric['worst_wrist_steps']),default=0),
         'max_joint_step_degrees':max((x['step_degrees'] for x in numeric['worst_joint_steps']),default=0)}
     geometry = json.loads(Path('output/plan/refinement-validation.json').read_text())

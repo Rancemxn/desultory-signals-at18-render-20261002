@@ -17,7 +17,7 @@ jobs:
       - uses: ./.github/actions/runtime
       - run: |
           mkdir -p output/plan
-          gh release download refined-plan-v7 --pattern 'plan.psap' --pattern 'motion-plan.json' --dir output/plan
+          gh release download refined-plan-v8 --pattern 'plan.psap' --pattern 'motion-plan.json' --dir output/plan
         env:
           GH_TOKEN: ${{ github.token }}
       - run: python -u refined_task.py probe ${{ matrix.part }}

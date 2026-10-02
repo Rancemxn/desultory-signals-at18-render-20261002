@@ -7,6 +7,7 @@ import sys
 
 import bpy
 from mathutils import Vector
+from mathutils.bvhtree import BVHTree
 
 sys.path.insert(0,str(Path(__file__).resolve().parent))
 from handcam_blender import FINGERS, camera_pixel, configure_camera, screen_rect, skin_pads
@@ -54,7 +55,7 @@ def inspect(job,rig,*,start=None,end=None,mesh_times=()):
                 reverse = -(second_tip.x-first_tip.x)*(1 if expected>0 else -1)*max(abs(v) for v in arm.scale)
                 if reverse>.002:
                     crossings.append({'time':t,'hand':side,'fingers':[a,b],'reverse_mm':reverse*1000})
-    projected = []
+    projected,mesh_intersections = [],[]
     if mesh_times:
         indices = {(int(k.split(':')[0]),k.split(':')[1]):v for k,v in rig['pad_vertices'].items()}
         meshes = {side:next(o for o in scene.objects if o.type=='MESH' and o.parent==arm) for side,arm in arms.items()}
@@ -72,9 +73,44 @@ def inspect(job,rig,*,start=None,end=None,mesh_times=()):
                 projected.append({'time':t,'hand':key[0],'finger':key[1],'notes':c['note_ids'],
                     'pad_world':list(pads[key]),'projected_pixel':list(pixel),
                     'target_pixel':[x+w*uv[0],y+h*uv[1]],'error_px':math.dist(pixel,(x+w*uv[0],y+h*uv[1]))})
+            graph = bpy.context.evaluated_depsgraph_get()
+            trees = {}
+            for side,obj in meshes.items():
+                evaluated = obj.evaluated_get(graph)
+                mesh = evaluated.to_mesh()
+                try:
+                    vertices = [evaluated.matrix_world@v.co for v in mesh.vertices]
+                    polygons = [tuple(p.vertices) for p in mesh.polygons]
+                    trees[side] = BVHTree.FromPolygons(vertices,polygons)
+                    owner = {obj.vertex_groups[name].index:finger for finger,chain in FINGERS.items()
+                             for name in chain if name in obj.vertex_groups}
+                    vertex_owner = []
+                    for v in mesh.vertices:
+                        group = max(v.groups,key=lambda g:g.weight).group if v.groups else None
+                        vertex_owner.append(owner.get(group))
+                    fingers = {}
+                    for finger in FINGERS:
+                        faces = [poly for poly in polygons if all(vertex_owner[i]==finger for i in poly)]
+                        if faces:
+                            fingers[finger] = BVHTree.FromPolygons(vertices,faces)
+                    names = list(fingers)
+                    for i,a in enumerate(names):
+                        for b in names[i+1:]:
+                            count = len(fingers[a].overlap(fingers[b]))
+                            if count:
+                                mesh_intersections.append({'time':t,'parts':[f'{side}:{a}',f'{side}:{b}'],
+                                                           'intersecting_polygon_pairs':count})
+                finally:
+                    evaluated.to_mesh_clear()
+            count = len(trees[-1].overlap(trees[1]))
+            if count:
+                mesh_intersections.append({'time':t,'parts':['left_hand','right_hand'],
+                                           'intersecting_polygon_pairs':count})
     return {'frames':last-first+1,'worst_wrist_steps':sorted(wrist_steps,key=lambda x:-x['lateral_speed_mps'])[:50],
         'worst_joint_steps':sorted(joint_steps,key=lambda x:-x['step_degrees'])[:50],
-        'finger_order_violations':crossings,'projected_contacts':projected,'boundary_poses':boundaries}
+        'finger_order_violations':crossings,'projected_contacts':projected,'boundary_poses':boundaries,
+        'mesh_intersections':mesh_intersections,'mesh_check_times':list(mesh_times),
+        'self_mesh_scope':'pairs of fingers; faces wholly dominated by a finger chain, excluding shared palm webbing'}
 
 
 if __name__=='__main__':
@@ -91,4 +127,5 @@ if __name__=='__main__':
     args.output.write_text(json.dumps(report,indent=2))
     print(json.dumps({'frames':report['frames'],'worst_wrists':report['worst_wrist_steps'][:3],
         'worst_joints':report['worst_joint_steps'][:3],'order_violations':len(report['finger_order_violations']),
-        'contact_projection':report['projected_contacts']}),flush=True)
+        'contact_projection':sorted(report['projected_contacts'],key=lambda x:-x['error_px'])[:6],
+        'mesh_intersection_samples':len(report['mesh_intersections'])}),flush=True)

@@ -44,6 +44,19 @@ transition preserves the evaluated joint pose before applying curl. Pose
 snapshots preserve bone location/scale exactly and restore the contact-state
 history used by avoidance decay.
 
+The second probe revision also merges numerically identical sample times,
+blends the idle target clamp out before landing and back in after release,
+and keeps inactive distal skin above the screen with a gradual hover margin.
+The 84–89 s relay is authored from the measured index/middle offsets with a
+smoothly introduced palm yaw guide. The 110–112 s holds use the thumbs so the
+other fingers can perform the nearby swipes. This revision reduces the palm
+stroke to 24–30 mm before the palm ratio, vertical strike speed to 0.75 m/s,
+and decorative lateral sway to 2 mm. These are stored in the plan's pose style.
+
+Numerical review includes sampled mesh BVH intersections between the hands
+and between individual fingers, separately from the conservative capsule
+collision counts. Shared palm webbing is excluded from the finger-only check.
+
 `test_pose_transitions.py` checks those control transitions, 1000 exact pose
 restorations, and the wrist correction bound. The six-held-finger fixture checks
 the saved mesh, not just target objects. `inspect_pose_numeric.py` measures actual

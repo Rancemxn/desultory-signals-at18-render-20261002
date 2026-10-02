@@ -424,6 +424,14 @@ def main(argv=None):
                        camera_offset_y=-.15,
                        enable_thumb=True, pose_avoidance=True,
                        wrist_speed=motion_plan['settings']['wrist_speed'])
+            guides = copy.deepcopy(motion_plan.get('pose_guides',[]))
+            for guide in guides:
+                for name in ('prepare','start','end','release'):
+                    guide[name] += chart.offset
+            job['pose_guides'] = guides
+            for name in ('palm_lift_low','palm_lift_high','palm_strike_speed','transfer_sway'):
+                if name in motion_plan.get('pose_style',{}):
+                    job[name] = motion_plan['pose_style'][name]
         _, _, sw, sh = screen_rect(job)
         if not args.bake_only:
             background_image(picture, args.width, args.height, .2, args.height * .045).save(str(out / 'background.png'))
