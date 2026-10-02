@@ -22,7 +22,7 @@
     "pgr.py": "632b73fe400a0f380e2c44c27c382221d9870a10c3b685f4df308f443c4674e4",
     "phigros_renderer.py": "f80a4a4dbb9bece389a8197451195852e0883ff43ff410d8565f1f6380491d08",
     "preview.py": "3eebbd43803c368dfccf241ae984248c6e4e26bb44c13e1eb3d82b511c36b204",
-    "pyproject.toml": "0b5a9735bb5e75b30b7b8ce555e36ceacfaaa86fbe7bdfdf207c5d612473985f",
+    "pyproject.toml": "1e7765f529d7b68e870f2ffdcb4a7782a7f5b345b1f29bb25af7c5ed7c2819ab",
     "rapi.py": "a1be3595cf62856c9f09b03b99f6293236d1d186309b3884f1d67e1bb0d0d6b7",
     "rpe.py": "f87b907d27dd8bc2947166820488d0687bf2c57c67c92c5f231ea56aa196d4d2",
     "test_algo5.py": "16f3a493da17b39d33c4ae80d18197a9b170309d97579278c2c5806a5361679a",
@@ -42,7 +42,7 @@
     "test_handcam_wrist.py": "3a8a5d804acc84b1c04d9a06e055300bc5827f9b1af817f00a469b5793d5ba3e",
     "test_phigros_renderer.py": "f09a99ccc04751d158bd55808f58ea0420f79e4134d215676ef83b8b02e81b95",
     "timing.py": "c42a1357fdf92557a8c820d430a45619b8b89bef67b58a3d013f0f0fe6a796a1",
-    "uv.lock": "4d481c787348b0a97d10cc3dc6a21726b64e883be5b27ea9eac9271538e736d2",
+    "uv.lock": "5df636f8826cb6262b5bcc8d84c8079bbb8e6264771cabb8f0f040f4aab1e3fb",
     "algo/algo1.py": "1d111138d4476dfae00cdba3a8a718efe6138e7afe9fbc628daa22e0c5cd6ce1",
     "algo/algo2.py": "f0de03a17285be9dfd2ed0bda45e15eb43b4499fb0a04bbf05e9da647f7ca3b0",
     "algo/algo3.py": "813bfad643b175fffa9bc33746d7fa34f7c6097f23e91dac92bff1c4b733141c",
@@ -52,13 +52,16 @@
     "refine_plan.py": "1f2c2ad39c5e6e6f758a8c0f6e14f3d9bd673a75963668fcdb6f66da5ed846a8",
     "block_area.py": "f74f85f50301d4f3ba281365cd9efa2ef9beefdc12ad46508209442d9e15c080",
     "block_motion.py": "b22dd470e6824ed6d1431f4af0b39ac8246695aca110e37d3c03fbdbc937c527",
-    "block_render.py": "2fe80dcf5ee20746dca3471a4501fa9ef90253c6a6386e920dc5686e02912cdd",
+    "block_render.py": "d50968703b66de6e7820f78b75d8bd3babcabb26c7380de4e68439240aa01892",
     "test_block_area.py": "b29e9694a594f1cb0820a7691ceffcf11407724bf028153daffdb7f27c7043d7",
     "block_assets/active.sksl": "1e1789ec6dfa4f3ace7b9f1892faa26076a86c32fc486238cbcabefa4c528908",
     "block_assets/compose.sksl": "3708a93980000dbe91b49570250c1c4f02ee86e9dbdd6395f1f5231c61eeaddd",
     "block_assets/disabled.sksl": "d21fea2929f79bc2f42f5a53fb34d50bd85c68c199b187bbbd9b1fd52297ed3b",
     "block_assets/displace.png": "da61ab2294ddb456314caece0565f24fbddccdf5fe7d98ec4a680c3f66033979",
-    "block_assets/spark.png": "fe1a54ef26f7d95d781f5d801a28ad82a7927c567218cda79e2a66a5988a7984"
+    "block_assets/spark.png": "fe1a54ef26f7d95d781f5d801a28ad82a7927c567218cda79e2a66a5988a7984",
+    ".github/actions/runtime/action.yml": "26f209690611c165a71b63b7841a132b31af4a5074bdaa0fb60a2f4693708e0b",
+    "BLOCK_AREAS.md": "d73ff120ad0a466330aadc20b523987117f4050959f1e2773b1c1af91b9bac6d",
+    "test_block_render.py": "ec7b91874993681c83274424f39527adb615fdd0f35ae2a2151b61a4bab93ac4"
   },
   "isolation_note": "Task-specific snapshot; main project is not modified. Local relay scripts excluded."
 }

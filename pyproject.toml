@@ -9,6 +9,7 @@ version = "0.2.0"
 description = "[Android] Semi-automatic player for Phigros"
 requires-python = "==3.13.*"
 dependencies = [
+    "glcontext==3.0.0",
     "av>=17.0.1",
     "lz4>=4.4.5",
     "numpy>=2.4.6",

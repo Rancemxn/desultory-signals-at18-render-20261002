@@ -6,6 +6,7 @@ for the validated autoplay plan. GPU/color-space differences are documented.
 """
 from pathlib import Path
 import math
+import sys
 import numpy as np
 import skia
 from block_area import compose
@@ -37,8 +38,23 @@ def _dilate(a):
 
 
 class BlockRenderer:
-    def __init__(self,blocks,width,height):
+    def __init__(self,blocks,width,height,use_gpu=True):
         self.blocks,self.width,self.height=blocks,width,height
+        self.native = self.gpu = None
+        if use_gpu:
+            try:
+                import glcontext
+                backend = glcontext.get_backend_by_name('egl') if sys.platform.startswith('linux') else glcontext.default_backend()
+                self.native = backend(glversion=330,mode='standalone')
+                with self.native:
+                    self.gpu = skia.GrDirectContext.MakeGL()
+                if self.gpu is None:
+                    self.native.release()
+                    self.native = None
+            except Exception as exc:
+                self.native = self.gpu = None
+                print(f'BLOCK_RENDER raster fallback: {type(exc).__name__}: {exc}',flush=True)
+        print(f'BLOCK_RENDER backend={"OpenGL" if self.gpu else "raster"}',flush=True)
         self.size=(max(1,width//8),max(1,height//8))
         self.effect_size=tuple(n*2 for n in self.size)
         self.scene_size=(max(1,width//6),max(1,height//6))
@@ -50,8 +66,16 @@ class BlockRenderer:
             skia.TileMode.kRepeat,skia.TileMode.kRepeat,skia.SamplingOptions(skia.FilterMode.kLinear))
         self.black=skia.Shaders.Color(skia.ColorBLACK)
 
+    def surface(self,size):
+        if self.gpu is None:
+            return skia.Surface(*size)
+        surface=skia.Surface.MakeRenderTarget(self.gpu,skia.Budgeted.kNo,skia.ImageInfo.MakeN32Premul(*size))
+        if surface is None:
+            raise RuntimeError('Cannot allocate the block effect surface')
+        return surface
+
     def mask(self,geometry):
-        s=skia.Surface(*self.size)
+        s=self.surface(self.size)
         c=s.getCanvas();c.clear(skia.ColorBLACK)
         c.scale(self.size[0]/self.blocks.width,self.size[1]/self.blocks.height)
         c.drawPath(_path(geometry),skia.Paint(Color=skia.ColorWHITE,AntiAlias=False))
@@ -72,6 +96,20 @@ class BlockRenderer:
         return b.makeShader()
 
     def draw(self,canvas,seconds):
+        if self.gpu is None:
+            return self._draw(canvas,seconds)
+        if not any(b.phase(seconds) != 'hidden' for b in self.blocks.areas):
+            return
+        # Upload the already-rendered chart once, do only the block passes on
+        # this private context, then return a raster frame to the existing encoder.
+        with self.native:
+            target=self.surface((self.width,self.height))
+            target.getCanvas().drawImage(canvas.getSurface().makeImageSnapshot(),0,0)
+            self._draw(target.getCanvas(),seconds)
+            result=target.makeImageSnapshot().makeRasterImage()
+        canvas.drawImage(result,0,0,paint=skia.Paint(BlendMode=skia.BlendMode.kSrc))
+
+    def _draw(self,canvas,seconds):
         phases={'active':[],'ready':[],'disabled':[]}
         for b in self.blocks.areas:
             phase=b.phase(seconds)
@@ -81,7 +119,7 @@ class BlockRenderer:
         # The APK uses 1/8-size point-filtered masks, 1/4-size effects and a
         # 1/6-size scene-color capture. Keep that characteristic blocky edge.
         raw=self.mask(geometries['active'])
-        mask_surface=skia.Surface(*self.size)
+        mask_surface=self.surface(self.size)
         compose_shader=self.shader('compose',seconds,{'mask':self.sampler(raw),'noise':self.noise},resolution=self.size)
         mask_surface.getCanvas().drawPaint(skia.Paint(Shader=compose_shader))
         mask=mask_surface.makeImageSnapshot()
@@ -105,7 +143,7 @@ class BlockRenderer:
         ready=self.mask(geometries['ready'])
         surface=canvas.getSurface()
         if surface is None: raise ValueError('Block effects require a raster surface')
-        scene_surface=skia.Surface(*self.scene_size)
+        scene_surface=self.surface(self.scene_size)
         scene_surface.getCanvas().drawImageRect(surface.makeImageSnapshot(),skia.Rect.MakeWH(*self.scene_size),
             skia.SamplingOptions(skia.FilterMode.kLinear))
         children={'mask':self.sampler(mask),'effects':self.sampler(effect,True),

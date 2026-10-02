@@ -14,8 +14,8 @@ runs:
     - shell: bash
       run: |
         sudo apt-get update -qq
-        sudo apt-get install -y -qq ffmpeg xvfb xauth libegl1 libxkbcommon0 libsm6 libxi6 libxrender1
-        python -m pip install --quiet numpy shapely z3-solver rich skia-python PySide6 av lz4 pyusb requests Pillow
+        sudo apt-get install -y -qq ffmpeg xvfb xauth libegl1 libgl1 libgl1-mesa-dri libxkbcommon0 libsm6 libxi6 libxrender1
+        python -m pip install --quiet numpy shapely z3-solver rich skia-python PySide6 av lz4 pyusb requests Pillow glcontext==3.0.0
         if [ ! -x /home/runner/blender/blender ]; then
           curl -fL --retry 4 https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz -o /tmp/blender.tar.xz
           echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3 /tmp/blender.tar.xz' | sha256sum -c -
