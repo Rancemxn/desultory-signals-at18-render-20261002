@@ -11,7 +11,7 @@ import shutil
 
 ROOT = Path(__file__).resolve().parent
 BLENDER = os.environ.get('HANDCAM_BLENDER','/home/runner/blender-headless')
-PROBES = [(70.,2.),(78.5,2.),(84.,5.),(110.,3.),(125.5,1.)]
+PROBES = [(70.,2.),(78.5,2.),(84.,5.),(110.,3.),(125.5,1.),(0.,6.),(10.25,5.)]
 
 
 def run(args):

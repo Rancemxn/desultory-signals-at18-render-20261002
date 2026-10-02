@@ -76,3 +76,7 @@ the following outer-left Tap uses the little finger to preserve the Hold.
 The two index-finger Drag routes near 111 s occupy separate vertical lanes
 inside their original central judgement strips. This removes the opposing
 index-finger intersection without changing any note time.
+
+The opening pair of long Holds is assigned to one middle finger per hand.
+The three later right-side Taps use the ring finger while the middle finger
+remains down, avoiding the former impossible left-hand span across both Holds.
