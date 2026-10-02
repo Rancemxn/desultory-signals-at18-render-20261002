@@ -20,13 +20,9 @@ FINGERS = {
 }
 
 
-def solve_steps(limit=6, seconds=.25):
-    """One shared refinement budget per motion sample, including collision corrections."""
-    deadline = time.monotonic() + seconds
-    for index in range(limit):
-        if index and time.monotonic() >= deadline:
-            break
-        yield index
+def solve_steps(limit=6):
+    """Deterministic refinement budget, independent of machine load and frame cost."""
+    yield from range(limit)
 
 
 def bake_rotations(rigs, baked):
@@ -617,7 +613,8 @@ def main(job):
                     bone.lock_ik_z = True
                 else:
                     bone.use_ik_limit_z = True
-                    bone.ik_min_z, bone.ik_max_z = -.65, .65
+                    spread = .65 if finger=='thumb' else {'index':.35,'middle':.22,'ring':.28,'little':.35}[finger]
+                    bone.ik_min_z, bone.ik_max_z = -spread, spread
         bpy.context.view_layer.update()
         for finger, chain in FINGERS.items():
             key = (side, finger)
@@ -740,7 +737,8 @@ def main(job):
             offset = target.location + delta * gain - origins[key]
             limit = .018 * job['hand_scale'] / .29
             target.location = origins[key] + (offset.normalized() * limit if offset.length > limit else offset)
-        # ponytail: accept the current pose after the shared budget; this is entertainment, not contact simulation.
+        # Stop on convergence or the fixed iteration budget. A wall-clock cutoff
+        # made adjacent samples depend on unrelated CPU load and caused jitter.
         for _ in refinement_steps if steps is None else steps:
             fitting_stats['updates'] += 1
             bpy.context.view_layer.update()
@@ -756,7 +754,8 @@ def main(job):
         return skin_pads(meshes, pad_indices)
     tracks = assign_contacts(motion_job, offsets)
     from handcam_avoidance import PoseAvoidance
-    avoidance = PoseAvoidance(rigs, targets, FINGERS) if job.get('pose_avoidance', True) else None
+    avoidance = PoseAvoidance(rigs, targets, FINGERS,
+        motion_limits=job.get('avoidance_motion_limits',dict(wrist_speed=.18,max_wrist_shift=.025))) if job.get('pose_avoidance', True) else None
     palm_bones = {(side, arm.pose.bones[chain[0]].parent.name): arm.pose.bones[chain[0]].parent
                   for side, arm in rigs.items() for chain in FINGERS.values()}
     palm_rest = {key: bone.matrix_basis.to_euler('XYZ') for key, bone in palm_bones.items()}
@@ -832,10 +831,12 @@ def main(job):
     min_clearance, mesh_samples = math.inf, 0
     # Warm up before the clip so a contact already on screen starts in the correct pose.
     previous_time = job['start'] - 1 - 1 / job['fps']
+    motion_stats = dict(wrist_speed_clamps=0,max_wrist_lateral_speed_mps=0.)
     last_progress = 0
     for t in sample_times(motion_job):
         dt = t - previous_time
         previous_time = t
+        previous_output_roots = {side:root.copy() for side,root in roots.items()}
         frame = (t - job['start']) * job['fps'] + 1
         video_frame = round(frame)
         is_video_frame = abs(frame - video_frame) < .00001 and 1 <= video_frame <= job['frames']
@@ -984,6 +985,31 @@ def main(job):
                 lambda: hand_collisions(rigs, collider_templates, margin=.001),
                 lambda values: fit_skin(values, range(3)), mesh_clearance, job['hand_scale'] / .27)
             collision_corrections += corrections
+        # The earlier guide limit precedes collision avoidance. Enforce it again
+        # on the final wrist so an accepted pose correction (or a discarded old
+        # correction) cannot teleport the whole hand after that limit.
+        bounded = False
+        for side,arm in rigs.items():
+            delta = roots[side]-previous_output_roots[side]
+            lateral = Vector((delta.x,delta.y,0.))
+            maximum = job.get('wrist_speed',.55)*max(0.,dt)
+            if lateral.length > maximum + 1e-9:
+                wanted = lateral*(maximum/lateral.length)
+                shift = wanted-lateral
+                arm.location += shift
+                roots[side] += shift
+                for key,(pos,weight,down) in list(samples.items()):
+                    if key[0]==side and not down:
+                        samples[key] = (Vector(pos)+shift,weight,down)
+                        targets[key].location += shift
+                motion_stats['wrist_speed_clamps'] += 1
+                bounded = True
+            if dt>0:
+                actual = roots[side]-previous_output_roots[side]
+                motion_stats['max_wrist_lateral_speed_mps'] = max(
+                    motion_stats['max_wrist_lateral_speed_mps'],math.hypot(actual.x,actual.y)/dt)
+        if bounded:
+            pads = fit_skin(samples,range(4))
         for _ in range(0 if avoidance else (3 if job.get('motion_plan_version') else 2)):
             collisions = hand_collisions(rigs, collider_templates)
             if not collisions:
@@ -1083,6 +1109,7 @@ def main(job):
                 'collision_corrections': collision_corrections,
                 'pose_avoidance': avoidance.stats if avoidance else None,
                 'fitting_stats': fitting_stats,
+                'motion_stats': motion_stats,
                 'static_geometry_cache': dict(meshes=len(static_geometry), initial_pad_error_mm=cache_error * 1000),
                 'motion_index': motion_index is not None,
                 'bulk_geometry': job.get('bake_bulk_geometry', True),

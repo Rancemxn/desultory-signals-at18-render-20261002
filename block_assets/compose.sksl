@@ -2,6 +2,7 @@ uniform shader mask;
 uniform shader noise;
 uniform float2 resolution;
 uniform float time;
+uniform float displacementStrength;
 half4 main(float2 pixel) {
     float2 uv = float2(pixel.x/resolution.x, 1-pixel.y/resolution.y);
     float2 dir = float2(.7071067812, .7071067812);
@@ -11,6 +12,6 @@ half4 main(float2 pixel) {
     float2 b = base + ortho*(time/20*2.59);
     float n1 = noise.eval(float2(a.x,1-a.y)*256).r-.5;
     float n2 = noise.eval(float2(b.x,1-b.y)*256).r-.5;
-    float2 offset = (dir*n1+ortho*n2)*.1;
+    float2 offset = (dir*n1+ortho*n2)*displacementStrength;
     return mask.eval(pixel+offset*resolution*float2(1,-1));
 }

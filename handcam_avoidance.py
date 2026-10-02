@@ -8,10 +8,13 @@ import math
 
 
 class PoseAvoidance:
-    def __init__(self, rigs, targets, chains):
+    def __init__(self, rigs, targets, chains, motion_limits=None):
         from mathutils import Vector
 
         self.rigs, self.targets, self.chains = rigs, targets, chains
+        self.motion_limits = motion_limits or {}
+        self.step_dt = 0.
+        self.step_wrists = {side: Vector() for side in rigs}
         self.wrists = {side: Vector() for side in rigs}
         self.angles = {side: Vector() for side in rigs}
         self.fingers = {key: Vector() for key in targets}
@@ -47,6 +50,14 @@ class PoseAvoidance:
                     if lateral.length > radius:
                         wanted = center + lateral.normalized() * radius
             delta = wanted - pivot
+            if self.motion_limits:
+                # A collision proposal is a per-sample correction, not a new
+                # destination that may bypass the baker's wrist speed limit.
+                change = self.wrists[side] + delta - self.step_wrists[side]
+                budget = self.motion_limits.get('wrist_speed', .18) * self.step_dt
+                if change.length > budget:
+                    change *= budget / change.length
+                delta = self.step_wrists[side] + change - self.wrists[side]
         transform = Matrix.Translation(pivot + delta) @ rotation @ Matrix.Translation(-pivot)
         old_euler = arm.rotation_euler.copy()
         arm.matrix_world = transform @ arm.matrix_world
@@ -63,12 +74,29 @@ class PoseAvoidance:
 
         pos, weight, down = samples[key]
         assert not down, 'Avoidance must not move a held contact'
+        arm = self.rigs[key[0]]
+        tip = arm.pose.bones[self.chains[key[1]][-1]]
+        if tip.constraints[0].influence < .999:
+            # FK may intentionally keep this airborne finger curled while its
+            # inactive IK target points toward a distant future note. Enabling
+            # that target directly straightened the finger for a single frame.
+            pad_offset = Vector(pos)-self.targets[key].location
+            self.targets[key].location = arm.matrix_world@tip.tail
+            pos = self.targets[key].location+pad_offset
         samples[key] = (Vector(pos) + delta, weight, down)
         self.targets[key].location += delta
-        self.rigs[key[0]].pose.bones[self.chains[key[1]][-1]].constraints[0].influence = 1.
+        tip.constraints[0].influence = 1.
 
     def curl_finger(self, key, delta):
         bones = [self.rigs[key[0]].pose.bones[name] for name in self.chains[key[1]]]
+        if bones[-1].constraints[0].influence > .001:
+            # Preserve the evaluated pose when handing control back from IK to
+            # explicit joint rotations, then apply only the requested curl.
+            rotations = [bone.bone.convert_local_to_pose(bone.matrix,bone.bone.matrix_local,
+                parent_matrix=bone.parent.matrix,parent_matrix_local=bone.parent.bone.matrix_local,
+                invert=True).to_euler('XYZ',bone.rotation_euler) for bone in bones]
+            for bone,rotation in zip(bones,rotations):
+                bone.rotation_euler = rotation
         bones[-1].constraints[0].influence = 0.
         for index, (bone, angle) in enumerate(zip(bones, delta)):
             bone.rotation_euler.x = max(-1.5, min(.8 if index == 0 else 0., bone.rotation_euler.x + angle))
@@ -115,15 +143,24 @@ class PoseAvoidance:
         """Keep a previous offset only while the current contacts remain reachable."""
         from mathutils import Vector
 
+        self.step_dt = max(0., dt)
+        self.step_wrists = {side:value.copy() for side,value in self.wrists.items()}
         original = self.snapshot(roots, samples)
         limits = {key: max(.0007, (pads[key] - Vector(pos)).length + .00005)
                   for key, (pos, _, down) in samples.items() if down}
         for attempt in range(4):
             if attempt:
                 self.restore(original, roots, samples)
-                for values in (self.wrists, self.angles, self.fingers, self.curls, self.cups):
-                    for value in values.values():
-                        value *= .5 ** attempt
+                for name,speed in (('wrists',.18),('angles',2.),('fingers',.45),('curls',2.5),('cups',1.2)):
+                    for value in getattr(self,name).values():
+                        if self.motion_limits:
+                            reduction = value*(1-.5**attempt)
+                            budget = speed*self.step_dt
+                            if reduction.length > budget:
+                                reduction *= budget/reduction.length
+                            value -= reduction
+                        else:
+                            value *= .5 ** attempt
             if not self.apply(roots, samples, dt):
                 return pads
             result = fit(samples)
@@ -147,11 +184,14 @@ class PoseAvoidance:
             # Keep the solved rotation while preserving rest translation/scale.
             rotation = solved.to_quaternion()
             rotation.normalize()
-            return Matrix.LocRotScale(Vector(), rotation, Vector((1., 1., 1.)))
+            return Matrix.LocRotScale(bone.location.copy(), rotation, bone.scale.copy())
         return dict(
+            previous_contacts=dict(self.previous_contacts),
             arms={side: (arm.matrix_world.copy(), arm.rotation_euler.copy()) for side, arm in self.rigs.items()},
             bones={(side, bone.name): (solved_basis(bone), tuple(c.influence for c in bone.constraints))
                    for side, arm in self.rigs.items() for bone in arm.pose.bones},
+            bone_channels={(side,bone.name):(bone.location.copy(),bone.scale.copy())
+                           for side,arm in self.rigs.items() for bone in arm.pose.bones},
             targets={key: obj.location.copy() for key, obj in self.targets.items()},
             roots={side: pos.copy() for side, pos in roots.items()}, samples=dict(samples),
             wrists={side: pos.copy() for side, pos in self.wrists.items()},
@@ -163,12 +203,15 @@ class PoseAvoidance:
     def restore(self, state, roots, samples):
         import bpy
 
+        self.previous_contacts = dict(state['previous_contacts'])
+
         for side, (matrix, angles) in state['arms'].items():
             self.rigs[side].matrix_world = matrix
             self.rigs[side].rotation_euler = angles
         for (side, name), (matrix, influences) in state['bones'].items():
             bone = self.rigs[side].pose.bones[name]
             bone.matrix_basis = matrix
+            bone.location, bone.scale = state['bone_channels'][side,name]
             for constraint, influence in zip(bone.constraints, influences):
                 constraint.influence = influence
         for key, pos in state['targets'].items():
@@ -299,6 +342,14 @@ class PoseAvoidance:
                     break
                 self.restore(original, roots, samples)
                 delta = delta * scale if kind != 'curl' else delta
+                if self.motion_limits:
+                    if kind in ('finger','curl'):
+                        budget = (.45 if kind=='finger' else 2.5)*self.step_dt
+                        if delta.length > budget:
+                            delta *= budget/delta.length
+                    angular_budget = (1.2 if kind=='cup' else 2.)*self.step_dt
+                    if angles.length > angular_budget:
+                        angles *= angular_budget/angles.length
                 if kind == 'arch':
                     for side in (key, -key):
                         held = [(k, Vector(pos)) for k, (pos, _, down) in samples.items() if k[0] == side and down]
@@ -344,6 +395,9 @@ class PoseAvoidance:
                     self.wrists[key] += actual
                 self.stats['trials'] += 1
                 trials_left -= 1
+                if self.motion_limits and any(v.length>self.motion_limits.get('max_wrist_shift',.025)*scale
+                                              for v in self.wrists.values()):
+                    continue
                 trial_pads = fit(samples)
                 if any((trial_pads[k] - Vector(samples[k][0])).length > limit for k, limit in limits.items()):
                     continue

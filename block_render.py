@@ -38,7 +38,10 @@ def _dilate(a):
 
 
 class BlockRenderer:
-    def __init__(self,blocks,width,height,use_gpu=True):
+    def __init__(self,blocks,width,height,use_gpu=True,boundary_mode='aligned'):
+        if boundary_mode not in ('aligned', 'native'):
+            raise ValueError(f'Unknown block boundary mode: {boundary_mode}')
+        self.boundary_mode = boundary_mode
         self.blocks,self.width,self.height=blocks,width,height
         self.native = self.gpu = None
         if use_gpu:
@@ -120,7 +123,8 @@ class BlockRenderer:
         # 1/6-size scene-color capture. Keep that characteristic blocky edge.
         raw=self.mask(geometries['active'])
         mask_surface=self.surface(self.size)
-        compose_shader=self.shader('compose',seconds,{'mask':self.sampler(raw),'noise':self.noise},resolution=self.size)
+        compose_shader=self.shader('compose',seconds,{'mask':self.sampler(raw),'noise':self.noise},
+            resolution=self.size,displacementStrength=.1 if self.boundary_mode == 'native' else 0.)
         mask_surface.getCanvas().drawPaint(skia.Paint(Shader=compose_shader))
         mask=mask_surface.makeImageSnapshot()
         pixels=mask.toarray(colorType=skia.ColorType.kRGBA_8888_ColorType)[:,:,0].astype(np.float32)/255

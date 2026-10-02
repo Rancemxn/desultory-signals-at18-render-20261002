@@ -4,6 +4,14 @@ This isolated Desultory Signals export reads all 160 `blockAreaList` entries.
 The planner and renderer share the geometry in `block_area.py`; timestamps and
 source note IDs are preserved. These changes are confined to this export snapshot.
 
+The refinement export defaults to **aligned boundaries**: the active fill uses
+the authored geometry without the native shader's UV displacement. Interior
+noise, color and glow remain. This is an intentional presentation change so
+the visible filled area and the planning boundary agree. `boundary_mode='native'`
+retains the earlier displaced mask for comparison. Native touch rejection still
+uses the independently reconstructed two-mask rule below; the refined planner
+also avoids the larger displayed geometry with clearance for raster edges.
+
 ## Native evidence
 
 The user supplied Phigros version 4.0.1, Android versionCode 157. Read-only
