@@ -1,0 +1,61 @@
+name: Reviewed 1080p60 final render
+on:
+  workflow_dispatch:
+    inputs:
+      bake_run:
+        description: Reviewed bake workflow run ID
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+jobs:
+  render:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: reviewed-bake-${{ matrix.part }}
+          path: output
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - run: python -u task.py render ${{ matrix.part }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: final-part-${{ matrix.part }}
+          path: |
+            delivery/part${{ matrix.part }}.mp4
+            delivery/part${{ matrix.part }}-*.json
+            output/part${{ matrix.part }}/*.log
+          retention-days: 7
+  assemble:
+    needs: render
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: final-part-*
+          path: assembled
+          merge-multiple: true
+      - run: python -u task.py assemble
+      - run: |
+          gh release create final-1080p60 delivery/Desultory-Signals-AT18-1080p60.mp4 delivery/validation.json delivery/final-review.jpg --title 'Desultory Signals AT18 · 1080p60 reviewed handcam' --notes-file DELIVERY.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-delivery
+          path: delivery
+          retention-days: 7

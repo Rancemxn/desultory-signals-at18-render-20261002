@@ -44,6 +44,16 @@ def sample(c, t):
     return [round(t,3), *point_at(c['points'], t)]
 
 
+# These central holds travel vertically while wide chords stay at the bottom.
+# Phigros holds allow movement along the judge strip: park them near the chords
+# instead of stretching one palm between opposite screen edges.
+for nid in (577,943,1187):
+    c=by_note(nid)
+    y=c['points'][0][2]
+    for p in c['points']: p[2]=y
+    edits.append({'kind':'park_vertical_hold_in_judge_strip','notes':[nid],'start':c['start'],'end':c['end'],'y':y})
+
+
 # At 110.2 s the paired holds cross. Exchange their continuation at the meeting point:
 # each index follows the trace entering its own half, maintaining two uninterrupted contacts.
 a,b = by_note(1087),by_note(310)
@@ -85,8 +95,9 @@ for phrase in phrases:
         path.append([t,p.real/chart.width,p.imag/chart.height])
     dt=path[1][0]-path[0][0]
     start=round(path[0][0]-.025,3)
-    initial=[start,path[0][1]-(path[1][1]-path[0][1])*.025/dt,
-                   path[0][2]-(path[1][2]-path[0][2])*.025/dt]
+    # Touch down at the first arrow, then sweep through its Drag stream. A
+    # backwards extrapolation made the hand stretch across the held outer lane.
+    initial=[start,*path[0][1:]]
     initial[1]=min(.985,max(.015,initial[1]));initial[2]=min(.985,max(.015,initial[2]))
     record.update(start=start,end=round(path[-1][0]+.014,3),
                   points=[initial,*path,[round(path[-1][0]+.013,3),*path[-1][1:]]],
@@ -101,10 +112,12 @@ for phrase in phrases:
 # holds use thumbs so that the long-held contact does not reserve an index finger.
 locks={}
 for nid,hand,finger in [(933,'left','thumb'),(1356,'right','thumb'),
-                        (251,'right','index'),(1029,'left','index')]:
+                        (251,'right','index'),(1029,'left','index'),
+                        (577,'right','thumb'),(943,'left','thumb'),(1187,'right','thumb'),
+                        (1133,'left','index')]:
     c=by_note(nid);c['hand']=hand;c['finger']=finger
     locks[id(c)]=(hand,finger)
-locks[id(a)]=('left','index');locks[id(b)]=('right','index')
+locks[id(a)]=('left','ring');locks[id(b)]=('right','ring')
 for c in (a,b): c['hand'],c['finger']=locks[id(c)]
 
 

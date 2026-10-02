@@ -78,8 +78,24 @@ def render(part):
     out = Path(f'output/part{part}')
     start = part * 20
     duration = min(20, 150.75 - start)
-    run(common() + ['--psap', 'output/plan/plan.psap', '--motion-plan', 'output/plan/motion-plan.json',
-                    '--stream', '--start', str(start), '--duration', str(duration), '--output', out])
+    if not (out / 'handcam.blend').is_file():
+        raise ValueError('Final rendering requires the manually reviewed saved bake')
+    from handcam import unpack, prepare_resources, render_screen, render_saved
+    from chart import load_chart
+    from phigros_renderer import background_image, mix_audio
+    out = out.resolve()
+    job = json.loads((out / 'job.json').read_text())
+    assert job['start'] == start and job['frames'] == round(duration * 60)
+    chartpath, music, _ = unpack(Path('inputs/desultory-signals.zip').resolve(), out / 'input')
+    chart = load_chart(chartpath.read_text(encoding='utf-8-sig'), source=chartpath)
+    job.update(output=str(out),resources=str(prepare_resources(Path('inputs/resources.zip').resolve(),out/'resources')),
+               background=str(out/'background.png'),screen_video=str(out/'screen.mp4'),mixed_audio=str(out/'audio.wav'))
+    picture = Path('inputs/illustration.jpg')
+    background_image(picture,1920,1080,.2,1080*.045).save(job['background'])
+    renderer = render_screen(chart,picture,out/'screen',job)
+    mix_audio(music,job['resources'],renderer.hits,start,duration,.35,Path(job['mixed_audio']))
+    (out/'job.json').write_text(json.dumps(job,indent=2))
+    render_saved(out,BLENDER)
     delivery = Path('delivery')
     delivery.mkdir(exist_ok=True)
     shutil.copyfile(out / 'handcam.mp4', delivery / f'part{part}.mp4')

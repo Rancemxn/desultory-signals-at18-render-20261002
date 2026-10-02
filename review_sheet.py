@@ -12,7 +12,7 @@ job = json.loads((out / 'job.json').read_text())
 times = json.loads((out / 'review-times.json').read_text())
 chartpath = next((out / 'input').rglob('chart.json'))
 chart = load_chart(chartpath.read_text(encoding='utf-8-sig'), source=chartpath)
-job.update(width=960, height=540)
+job.update(width=1280, height=720)
 x, y, w, h = screen_rect(job)
 renderer = PhigrosRenderer(chart, w, h, job['resources'], job['title'], job['level'], job['music_duration'])
 bg = background_image(Path('inputs/illustration.jpg'), w, h, job['background_dim'], h * .015)
@@ -25,7 +25,7 @@ for index, t in enumerate(times):
     renderer.draw(canvas, t - chart.offset)
     import io
     screen = Image.open(io.BytesIO(bytes(surface.makeImageSnapshot().encodeToData())))
-    frame = Image.new('RGBA', (960, 540), '#182332')
+    frame = Image.new('RGBA', (1280, 720), '#182332')
     frame.paste(screen, (x, y))
     frame.alpha_composite(Image.open(out / 'review-hands' / f'{index}.png').convert('RGBA'))
     col, row = index % 2, index // 2
