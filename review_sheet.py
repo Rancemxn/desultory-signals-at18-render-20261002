@@ -30,5 +30,5 @@ for index, t in enumerate(times):
     frame.alpha_composite(Image.open(out / 'review-hands' / f'{index}.png').convert('RGBA'))
     col, row = index % 2, index // 2
     sheet.paste(frame.convert('RGB').resize((640, 360)), (col * 640, row * 384 + 24))
-    draw.text((col * 640 + 12, row * 384 + 5), f'{t:.3f} s  |  BASELINE BAKED POSE', fill='white')
+    draw.text((col * 640 + 12, row * 384 + 5), f'{t:.3f} s  |  REVIEWED BAKED POSE', fill='white')
 sheet.save(out / 'review.jpg', quality=87)

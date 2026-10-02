@@ -1,0 +1,12 @@
+.local/
+ssh-relay*.py
+inputs/
+output/
+delivery/
+assembled/
+baseline/
+reviewed*/
+*.zip
+*.log
+task-state.json
+__pycache__/
