@@ -14,6 +14,16 @@ scene.render.image_settings.file_format = 'PNG'
 scene.render.image_settings.color_mode = 'RGBA'
 scene.render.film_transparent = True
 (out / 'review-hands').mkdir(exist_ok=True)
+boundaries = []
+for frame in (1, job['frames']):
+    scene.frame_set(frame)
+    boundaries.append({'time': job['start'] + (frame - 1) / job['fps'], 'rigs': {
+        arm.name: {'matrix': [list(row) for row in arm.matrix_world],
+                   'bones': {bone.name: {'head': list(arm.matrix_world @ bone.head),
+                                          'tail': list(arm.matrix_world @ bone.tail)}
+                             for bone in arm.pose.bones}}
+        for arm in scene.objects if arm.type == 'ARMATURE'}})
+(out / 'boundary-poses.json').write_text(json.dumps(boundaries))
 for index, t in enumerate(times):
     frame = (t - job['start']) * job['fps'] + 1
     scene.frame_set(int(frame), subframe=frame % 1)

@@ -63,49 +63,87 @@ ap,bp = copy.deepcopy(a['points']),copy.deepcopy(b['points'])
 a['points'] = [p for p in ap if p[0]<meeting]+[sample(a,meeting)]+[p for p in bp if p[0]>meeting]
 b['points'] = [p for p in bp if p[0]<meeting]+[[meeting,*point_at(bp,meeting)]]+[p for p in ap if p[0]>meeting]
 a['note_ids'] = b['note_ids'] = [1087,310]
-a['manual_role'],b['manual_role']='left index hold exchange','right index hold exchange'
+a['manual_role'],b['manual_role']='left outer-finger hold exchange','right outer-finger hold exchange'
 edits.append({'kind':'paired_hold_exchange','time':meeting,'notes':[1087,310],
               'meeting_distance_mm':1000*math.dist(world_xy(point_at(ap,meeting),screen),world_xy(point_at(bp,meeting),screen))})
 
 
-# Fast Flick-to-Drag phrases are continuous strokes. Their 18.6 ms subdivisions
-# describe positions on a sweep, not repeated finger lifts or distant re-taps.
-phrases = [
-    [1484,1485,1486,1487,1488,1489],
-    [1427,1428,1429,1430,1431,1432],
-    [1433,1434,1435,1436,1437,1438],
-    [1490,1491,1492,1493,1494,1495],
-    [1408,1409,1411,1413,1415],
-    [1439,1410,1412,1414,1416],
-    [1417,1419,1421,1423,1425],
-    [1418,1420,1422,1424],
-]
+# The same short Flick/Drag figure recurs in the opening, the rotating middle,
+# and the ending. Author each figure as a stroke, handing it across at mid-screen.
+phrases=[]
+for line in chart.lines:
+    current=[]
+    for nid,(owner,note) in notes.items():
+        if owner is not line: continue
+        if note.type==NoteType.FLICK:
+            if len(current)>1: phrases.append(current)
+            current=[nid]
+        elif (current and note.type==NoteType.DRAG and
+              0<note.seconds-notes[current[-1]][1].seconds<=.055 and
+              note.seconds-notes[current[0]][1].seconds<=.22):
+            current.append(nid)
+        else:
+            if len(current)>1: phrases.append(current)
+            current=[]
+    if len(current)>1: phrases.append(current)
+
+def note_point(nid):
+    line,note=notes[nid]
+    p=line.pos(note.seconds,note.offset)
+    return [round(note.seconds,3), min(.99,max(.01,p.real/chart.width)), min(.99,max(.01,p.imag/chart.height))]
+
+# Exact duplicate streams share their Drag continuation. Keep the second Flick
+# as an independent swipe, as in the original plan.
+unique={}; aliases={}
 for phrase in phrases:
-    selected=[]
+    signature=tuple(tuple(round(x,7) for x in note_point(nid)) for nid in phrase)
+    if signature in unique:
+        for original,duplicate in zip(unique[signature][1:],phrase[1:]):
+            aliases.setdefault(original,[]).append(duplicate)
+    else:
+        unique[signature]=phrase
+phrases=list(unique.values())
+selected_ids={nid for phrase in phrases for nid in phrase}|{nid for ids in aliases.values() for nid in ids}
+originals={nid:copy.deepcopy(by_note(nid)) for nid in selected_ids}
+retained=[]
+for c in contacts:
+    remaining=[nid for nid in c['note_ids'] if nid not in selected_ids]
+    if not remaining: continue
+    if len(remaining)!=len(c['note_ids']):
+        for nid in remaining:
+            record=copy.deepcopy(c)
+            line,note=notes[nid]
+            begin=round(note.seconds,3);end=round(begin+.013,3)
+            record.update(note_ids=[nid],start=begin,end=end,beat=begin,
+                          points=[[begin,*point_at(c['points'],begin)],[round(end-.001,3),*point_at(c['points'],end-.001)]])
+            retained.append(record)
+    else: retained.append(c)
+contacts[:]=retained
+for phrase in phrases:
+    chunks=[]
     for nid in phrase:
-        c=by_note(nid)
-        if not any(c is old for old in selected): selected.append(c)
-    first=selected[0]
-    record=copy.deepcopy(first)
-    path=[]
-    for nid in phrase:
-        line,note=notes[nid]
-        t=round(note.seconds,3)
-        p=line.pos(note.seconds,note.offset)
-        path.append([t,p.real/chart.width,p.imag/chart.height])
-    dt=path[1][0]-path[0][0]
-    start=round(path[0][0]-.025,3)
-    # Touch down at the first arrow, then sweep through its Drag stream. A
-    # backwards extrapolation made the hand stretch across the held outer lane.
-    initial=[start,*path[0][1:]]
-    initial[1]=min(.985,max(.015,initial[1]));initial[2]=min(.985,max(.015,initial[2]))
-    record.update(start=start,end=round(path[-1][0]+.014,3),
-                  points=[initial,*path,[round(path[-1][0]+.013,3),*path[-1][1:]]],
-                  note_ids=sorted(set(i for c in selected for i in c['note_ids'])),
-                  manual_role='continuous flick-drag sweep')
-    for c in selected: contacts.remove(c)
-    contacts.append(record)
-    edits.append({'kind':'continuous_sweep','start':start,'notes':record['note_ids']})
+        point=note_point(nid)
+        hand=('left' if point[1]<.5 else 'right') if abs(point[1]-.5)>.015 or not chunks else chunks[-1][0]
+        if not chunks or hand!=chunks[-1][0]: chunks.append((hand,[]))
+        chunks[-1][1].append(nid)
+    for hand,ids in chunks:
+        record=copy.deepcopy(originals[ids[0]])
+        path=[note_point(nid) for nid in ids]
+        flick=notes[ids[0]][1].type==NoteType.FLICK
+        start=round(path[0][0]-(.025 if flick else .008),3)
+        end=round(path[-1][0]+.014,3)
+        # A one-note Flick keeps its actual swipe, rather than becoming stationary.
+        if flick and len(ids)==1:
+            path=copy.deepcopy(record['points'])
+            start,end=record['start'],record['end']
+        else:
+            path=[[start,*path[0][1:]],*path,[round(end-.001,3),*path[-1][1:]]]
+        assigned=[n for nid in ids for n in [nid,*aliases.get(nid,[])]]
+        record.update(start=start,end=end,beat=round(notes[ids[0]][1].seconds,3),points=path,
+                      note_ids=assigned,kind='flick' if flick else 'drag',manual_hand=hand,
+                      manual_role='flick-drag stroke with centre handoff')
+        contacts.append(record)
+        edits.append({'kind':'continuous_sweep','start':start,'hand':hand,'notes':assigned})
 
 
 # Long holds spreading from the centre need one hand each. The first two opening
@@ -119,6 +157,20 @@ for nid,hand,finger in [(933,'left','thumb'),(1356,'right','thumb'),
     locks[id(c)]=(hand,finger)
 locks[id(a)]=('left','ring');locks[id(b)]=('right','ring')
 for c in (a,b): c['hand'],c['finger']=locks[id(c)]
+
+# Bottom-row chords: keep each hand on its own side and reserve the thumbs for
+# the central holds. This prevents a global left/right swap between successive chords.
+for c in contacts:
+    if 60.594<=c['start']<65.32 and id(c) not in locks:
+        x=sum(p[1] for p in c['points'])/len(c['points'])
+        if abs(x-.5)>.08:
+            hand='left' if x<.5 else 'right'
+            finger='ring' if x<.22 or x>.78 else 'index'
+            c['hand'],c['finger']=hand,finger
+            locks[id(c)]=(hand,finger)
+        elif c['note_ids']==[1369]:
+            c['hand'],c['finger']='left','thumb'
+            locks[id(c)]=('left','thumb')
 
 
 def normal(c):
@@ -170,7 +222,8 @@ for i,c in enumerate(contacts):
     x=sum(p[1] for p in c['points'])/len(c['points'])
     for k,(hand,finger) in enumerate(keys):
         side=-1 if hand=='left' else 1
-        unary[i,k]=40*max(0.,-side*(x-.5))**2+{'index':0.,'middle':.12,'ring':.8,'thumb':1.6}[finger]
+        unary[i,k]=100000*max(0.,-side*(x-.5)-.035)**2+{'index':0.,'middle':.3,'ring':2.,'thumb':15.}[finger]
+        if c.get('manual_hand') and hand!=c['manual_hand']: unary[i,k]+=1e9
     if i in locked:
         unary[i,:]=1e12;unary[i,locked[i]]=0;labels[i]=locked[i]
 

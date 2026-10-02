@@ -7,6 +7,7 @@ import subprocess
 import sys
 import time
 import hashlib
+import os
 
 ROOT = Path(__file__).resolve().parent
 BLENDER = '/home/runner/blender-headless'
@@ -55,7 +56,14 @@ def bake(part, start_override=None, duration_override=None):
         if len(times) >= 12:
             break
     times = sorted(times)
+    times = sorted(set([start, *times, start + (job['frames'] - 1) / job['fps']]))
     (out / 'review-times.json').write_text(json.dumps(times))
+    (out / 'provenance.json').write_text(json.dumps({
+        'commit': os.environ.get('GITHUB_SHA'), 'workflow_run': os.environ.get('GITHUB_RUN_ID'),
+        'plan_sha256': hashlib.sha256((Path('output/plan/motion-plan.json')).read_bytes()).hexdigest(),
+        'psap_sha256': hashlib.sha256((Path('output/plan/plan.psap')).read_bytes()).hexdigest(),
+        'start': start, 'frames': job['frames'], 'fps': job['fps'],
+    }, indent=2))
     run([BLENDER, '--background', '--disable-autoexec', out / 'handcam.blend',
          '--python-exit-code', '1', '--python', ROOT / 'review_blender.py', '--', out.resolve()])
     run([sys.executable, 'review_sheet.py', out])
