@@ -979,10 +979,10 @@ def main(job):
         refinement_steps = solve_steps()
         pads = fit_skin(samples)
         if avoidance:
-            pads = avoidance.prepare(roots, samples, dt, pads, lambda values: fit_skin(values, range(8)))
+            pads = avoidance.prepare(roots, samples, dt, pads, lambda values: fit_skin(values, range(3)))
             pads, corrections = avoidance.resolve(roots, samples, pads,
                 lambda: hand_collisions(rigs, collider_templates, margin=.001),
-                lambda values: fit_skin(values, range(8)), mesh_clearance, job['hand_scale'] / .27)
+                lambda values: fit_skin(values, range(3)), mesh_clearance, job['hand_scale'] / .27)
             collision_corrections += corrections
         for _ in range(0 if avoidance else (3 if job.get('motion_plan_version') else 2)):
             collisions = hand_collisions(rigs, collider_templates)

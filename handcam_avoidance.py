@@ -136,10 +136,18 @@ class PoseAvoidance:
         return fit(samples)
 
     def snapshot(self, roots, samples):
+        from mathutils import Matrix, Vector
+
         def solved_basis(bone):
             parent = (dict(parent_matrix=bone.parent.matrix,
                            parent_matrix_local=bone.parent.bone.matrix_local) if bone.parent else {})
-            return bone.bone.convert_local_to_pose(bone.matrix, bone.bone.matrix_local, invert=True, **parent)
+            solved = bone.bone.convert_local_to_pose(bone.matrix, bone.bone.matrix_local, invert=True, **parent)
+            # This rig animates rotations only. Repeatedly restoring an evaluated
+            # IK matrix feeds tiny scale/shear errors back into the next solve.
+            # Keep the solved rotation while preserving rest translation/scale.
+            rotation = solved.to_quaternion()
+            rotation.normalize()
+            return Matrix.LocRotScale(Vector(), rotation, Vector((1., 1., 1.)))
         return dict(
             arms={side: (arm.matrix_world.copy(), arm.rotation_euler.copy()) for side, arm in self.rigs.items()},
             bones={(side, bone.name): (solved_basis(bone), tuple(c.influence for c in bone.constraints))
@@ -272,10 +280,23 @@ class PoseAvoidance:
             return sum(max(0., .001 - clearance) ** 2 for clearance, *_ in items)
 
         accepted = 0
-        for _ in range(3):
+        trials_left = 24
+        for _ in range(2):
             original = self.snapshot(roots, samples)
             best, best_cost = None, cost(collisions)
-            for kind, key, delta, angles in self.proposals(collisions, samples):
+            # Visit different remedies early so dense chords cannot spend hundreds
+            # of mesh evaluations exhausting one family of unsuccessful guesses.
+            families = {}
+            for proposal in self.proposals(collisions, samples):
+                families.setdefault(proposal[0], []).append(proposal)
+            proposals = []
+            for index in range(max(map(len, families.values()), default=0)):
+                for values in families.values():
+                    if index < len(values):
+                        proposals.append(values[index])
+            for kind, key, delta, angles in proposals:
+                if trials_left <= 0:
+                    break
                 self.restore(original, roots, samples)
                 delta = delta * scale if kind != 'curl' else delta
                 if kind == 'arch':
@@ -322,6 +343,7 @@ class PoseAvoidance:
                         continue
                     self.wrists[key] += actual
                 self.stats['trials'] += 1
+                trials_left -= 1
                 trial_pads = fit(samples)
                 if any((trial_pads[k] - Vector(samples[k][0])).length > limit for k, limit in limits.items()):
                     continue

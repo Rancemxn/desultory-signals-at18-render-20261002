@@ -1,0 +1,34 @@
+name: Verify difficult baked poses
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  pose:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [100, 101, 102, 103]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - run: |
+          mkdir -p output/plan
+          gh release download reviewed-plan --pattern 'plan.psap' --pattern 'motion-plan.json' --dir output/plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: python -u task.py smoke ${{ matrix.part }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: smoke-${{ matrix.part }}
+          path: |
+            output/part*/*.json
+            output/part*/*.log
+            output/part*/review.jpg
+          retention-days: 7
+      - run: gh release upload reviewed-plan output/part${{ matrix.part }}/review-${{ matrix.part }}.jpg output/part${{ matrix.part }}/diagnostics-${{ matrix.part }}.json --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

@@ -1,0 +1,36 @@
+name: Authored fingering bake and inspection
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  bake:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - run: |
+          mkdir -p output/plan
+          gh release download reviewed-plan --pattern 'plan.psap' --pattern 'motion-plan.json' --dir output/plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: python -u task.py bake ${{ matrix.part }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reviewed-bake-${{ matrix.part }}
+          path: |
+            output/part*/handcam.blend
+            output/part*/*.json
+            output/part*/*.log
+            output/part*/review.jpg
+          retention-days: 7
+      - run: gh release upload reviewed-plan output/part${{ matrix.part }}/review-${{ matrix.part }}.jpg output/part${{ matrix.part }}/diagnostics-${{ matrix.part }}.json --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}
