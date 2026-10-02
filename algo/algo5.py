@@ -35,7 +35,7 @@ class Settings:
     fatigue_seconds: float = 4.
     recovery_seconds: float = .65
     allow_degraded: bool = True
-    fingers: tuple[str, ...] = ('index', 'middle', 'thumb')
+    fingers: tuple[str, ...] = ('index', 'middle', 'ring', 'thumb')
     visual_radius: float = .012
     hold_margin: float = .004
     flick_distance: float = .16
