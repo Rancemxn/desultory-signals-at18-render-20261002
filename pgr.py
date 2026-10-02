@@ -165,6 +165,8 @@ class PgrChart(Chart):
     def __init__(self, dic: PgrChartDict, ratio: tuple[int, int]) -> None:
         super().__init__()
         self.width, self.height = ratio
+        from block_area import BlockAreas
+        self.block_areas = BlockAreas(dic.get('blockAreaList', ()), *ratio)
         self.format = 'pgr'
         version = dic['formatVersion']
         self.offset = dic.get('offset', 0.0)

@@ -151,3 +151,5 @@ class Chart(metaclass=ABCMeta):
     def __init__(self) -> None:
         self.warnings: list[str] = []
         self.source: Path | None = None
+        from block_area import BlockAreas
+        self.block_areas = BlockAreas()

@@ -61,6 +61,10 @@ class PhigrosRenderer(ChartRenderer):
     def __init__(self, chart, width, height, resources, title='', level='', duration=1.):
         super().__init__(chart, width, height, line_width=.005)
         self.ui_lines = {line.attach_ui: line for line in chart.lines if line.attach_ui is not None}
+        self.block_renderer = None
+        if chart.block_areas:
+            from block_render import BlockRenderer
+            self.block_renderer = BlockRenderer(chart.block_areas,width,height)
         chart.warnings[:] = [w for w in chart.warnings if w != 'attachUI lines are not displayed in the simplified preview.']
         resources = Path(resources)
         pack = resources / 'respack' if (resources / 'respack').is_dir() else resources
@@ -268,6 +272,8 @@ class PhigrosRenderer(ChartRenderer):
         for line, visual in self.visuals:
             self.draw_note(canvas, line, visual, seconds)
         self.draw_effects(canvas, seconds)
+        if self.block_renderer:
+            self.block_renderer.draw(canvas,seconds)
         w, h = self.width, self.height
         unit = min(w / 18.75, h / 14)
         combo, score = self.stats(seconds)

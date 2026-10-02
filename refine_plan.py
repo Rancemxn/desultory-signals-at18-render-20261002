@@ -21,6 +21,7 @@ from algo.base import ScreenUtil, TouchAction, VirtualTouchEvent, dump_data
 from chart import load_chart
 from handcam import contacts_from_psap
 from handcam_motion import FINGER_ORDER, attach_plan, finish_motion, point_at, world_xy, travel_time
+from block_motion import repair_contacts, audit_contacts
 
 root = Path(sys.argv[1])
 target = Path(sys.argv[2])
@@ -49,7 +50,8 @@ def legal_point(nid,t,xy):
     center=line.pos(t,note.offset)
     zone=JudgeArea(center,cmath.exp(1j*(line.angle@t)),chart.width,chart.height,
                    JUDGE_HALF_DRAG if note.type in (NoteType.DRAG,NoteType.FLICK) else JUDGE_HALF_TAP).poly
-    return zone.buffer(1e-8).covers(Point(xy[0]*chart.width,xy[1]*chart.height))
+    return (zone.buffer(1e-8).covers(Point(xy[0]*chart.width,xy[1]*chart.height)) and
+            not chart.block_areas.contains(t,xy[0]*chart.width,xy[1]*chart.height))
 
 
 # Several decorative lines jump off-screen at judgement. Choose a reachable
@@ -253,6 +255,7 @@ for c in ordered:
             edits.append({'kind':'judge_strip_separation','notes':c['note_ids'],'time':t,'shift_mm':shift*1000})
 
 
+repair_contacts(chart, contacts, edits)
 contacts.sort(key=lambda c:(c['start'],c['pointer']))
 keys=[(h,f) for h in ('left','right') for f in ('index','middle','ring','thumb')]
 offsets=np.array([plan['profile']['fingers'][f"{-1 if h=='left' else 1}:{f}"]['offset'][:2] for h,f in keys])
@@ -398,7 +401,12 @@ for nid,(line,note) in notes.items():
         if not any(c['start']-.001<=t<c['end']+.001 and zone.buffer(1e-8).covers(Point(
             point_at(c['points'],t)[0]*chart.width,point_at(c['points'],t)[1]*chart.height)) for c in assigned):
             geometry_failures.append({'note':nid,'time':t});break
+if geometry_failures:
+    (target/'rejected-motion-plan.json').write_text(json.dumps(plan))
+    (target/'geometry-failures.json').write_text(json.dumps(geometry_failures,indent=2))
 assert not geometry_failures, geometry_failures[:20]
+block_failures = audit_contacts(chart,contacts)
+assert not block_failures, block_failures[:20]
 checker=Planner(chart,Settings(**plan['settings']),plan['profile'])
 history=[]
 degraded=[]
@@ -413,6 +421,8 @@ changes=[{'notes':c['note_ids'],'hand':c['hand'],'finger':c['finger']} for c in 
 report={'authored_edits':edits,'assignment_changes':changes,'objective_before':before,'objective_after':optimized_cost,
         'passes':passes,'all_2026_notes_retained':True,'psap_lifecycle_validation':'passed',
         'judge_strip_geometry':'passed for all notes and 20 ms hold samples','native_ap_validated':False}
+report['block_area_geometry'] = {'areas':len(chart.block_areas.areas),'violations':len(block_failures),
+    'sample_step_ms':1,'event_boundaries_checked':True,'native_version':'4.0.1 / 157'}
 plan['manual_review']=report
 plan['diagnostics']['baseline_degraded']=plan['diagnostics'].pop('degraded')
 plan['diagnostics'].update(degraded=degraded,contacts=len(contacts),finger_usage=dict(Counter(f"{c['hand']}:{c['finger']}" for c in contacts)),

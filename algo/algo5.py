@@ -107,6 +107,8 @@ def load_at(contacts, t, hand, finger=None, settings=None):
 class Planner:
     def __init__(self, chart, settings, profile):
         self.chart, self.settings, self.profile = chart, settings, profile
+        from block_area import BlockAreas
+        self.blocks = getattr(chart, 'block_areas', None) or BlockAreas()
         self.screen = ScreenUtil(chart.width, chart.height)
         self.physical = (settings.screen_width_m, settings.screen_width_m * chart.height / chart.width)
         self.keys = [(side, finger) for side in (-1, 1) for finger in settings.fingers
@@ -150,6 +152,10 @@ class Planner:
             half = JUDGE_HALF_DRAG if task.note.type in (NoteType.DRAG, NoteType.FLICK) else JUDGE_HALF_TAP
             legal = JudgeArea(center, rot, self.screen.width, self.screen.height, half).get_valid_poly(
                 self.screen_poly, self.pause_poly)
+            if self.blocks:
+                forbidden = self.blocks.forbidden(ms / 1000)
+                if not forbidden.is_empty:
+                    legal = legal.difference(forbidden.buffer(self.screen.width * .0002))
             if task.note.type == NoteType.HOLD and not legal.is_empty:
                 inset = legal.buffer(-self.screen.width * self.settings.hold_margin)
                 if not inset.is_empty:
@@ -216,6 +222,10 @@ class Planner:
         if key in self.paths:
             return self.paths[key]
         times = sorted({task.start, end, task.beat, *range(task.start, end, self.settings.sample_ms)})
+        if self.blocks:
+            times = sorted(set(times) | {ms for t in self.blocks.key_times
+                           for ms in (math.floor(t*1000)-1, math.floor(t*1000), math.ceil(t*1000))
+                           if task.start <= ms <= end})
         points, pos = [], seed
         normal = cmath.exp(1j * (task.line.angle @ task.note.seconds)) * 1j
         if abs(direction) == 2:
@@ -239,6 +249,12 @@ class Planner:
                 self.paths[key] = None
                 return None
             points.append([ms / 1000, pos[0] / self.screen.width, pos[1] / self.screen.height])
+        # A segment between legal endpoints may still pass through a block. This
+        # is a hard legality check, including Tap dwell and early Flick motion;
+        # allow_degraded never relaxes it.
+        if self.blocks.path_violations(points, task.start/1000, end/1000):
+            self.paths[key] = None
+            return None
         # Reject a clipped Flick that barely moves; native DPI-specific validation remains separate.
         if task.note.type == NoteType.FLICK and math.dist(world_xy(points[0][1:], self.physical),
                 world_xy(points[-1][1:], self.physical)) < self.physical[0] * .10:

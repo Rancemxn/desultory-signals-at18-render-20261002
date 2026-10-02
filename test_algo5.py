@@ -252,14 +252,17 @@ def check():
     rests = finish_motion(fixed, default_profile(), [.28, .1575], .28 / .82)
     assert not any(g['hand'] == 'left' and g['start'] <= 2. < g['end'] for g in rests)
     assert any(g['hand'] == 'right' and g['mode'] == 'withdraw' and g['start'] <= 2. < g['end'] for g in rests)
-    # Preparing another finger must not pull the wrist away from a held note.
+    # A free finger can prepare a chord while another holds. The wrist guide
+    # approaches it, but the held contact itself and palm height stay fixed.
     upcoming = dict(hand='left', finger='middle', start=2.1, end=2.2, prepare=1.8,
                     release_until=2.3, points=[[2.1, .7, .5]])
     base_wrist = wrist_pose(fixed, rests, -1, 2., job, offsets)
-    assert wrist_pose([*fixed, upcoming], rests, -1, 2., job, offsets) == base_wrist
-    # A held finger anchors its hand even when another finger prepares to tap.
+    preparing = wrist_pose([*fixed, upcoming], rests, -1, 2., job, offsets)
+    assert preparing[0] > base_wrist[0] and preparing[2] == base_wrist[2]
+    assert point_at(fixed[0]['points'], 2.) == (.25, .5)
     held_wrist = wrist_pose(fixed, rests, -1, 2., coupled_job, guides, guides)
-    assert wrist_pose([*fixed, upcoming], rests, -1, 2., coupled_job, guides, guides) == held_wrist
+    prepared_wrist = wrist_pose([*fixed, upcoming], rests, -1, 2., coupled_job, guides, guides)
+    assert prepared_wrist[0] > held_wrist[0] and prepared_wrist[2] == held_wrist[2]
     assert held_wrist == wrist_pose(fixed, rests, -1, 2., raised_job, guides, guides)
     assert held_wrist == wrist_pose(fixed, rests, -1, 2., accent_job, guides, guides)
     assert held_wrist == wrist_pose(fixed, rests, -1, 2., gentle_job, guides, guides)
