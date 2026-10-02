@@ -51,7 +51,7 @@ jobs:
           merge-multiple: true
       - run: python -u task.py assemble
       - run: |
-          gh release create final-1080p60 delivery/Desultory-Signals-AT18-1080p60.mp4 delivery/validation.json delivery/final-review.jpg --title 'Desultory Signals AT18 · 1080p60 reviewed handcam' --notes-file DELIVERY.md
+          gh release create final-1080p60 delivery/Desultory-Signals-AT18-1080p60.mp4 delivery/validation.json delivery/pose-diagnostics.json delivery/final-review.jpg delivery/DELIVERY.md --title 'Desultory Signals AT18 · 1080p60 reviewed handcam' --notes-file DELIVERY.md
         env:
           GH_TOKEN: ${{ github.token }}
       - uses: actions/upload-artifact@v4

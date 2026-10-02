@@ -107,7 +107,7 @@ def render(part):
     delivery = Path('delivery')
     delivery.mkdir(exist_ok=True)
     shutil.copyfile(out / 'handcam.mp4', delivery / f'part{part}.mp4')
-    for name in ('diagnostics', 'render-timings'):
+    for name in ('diagnostics', 'render-timings', 'boundary-poses', 'provenance'):
         shutil.copyfile(out / f'{name}.json', delivery / f'part{part}-{name}.json')
     probe = validate(delivery / f'part{part}.mp4', round(duration * 60))
     (delivery / f'part{part}-validation.json').write_text(json.dumps(probe, indent=2))
@@ -146,9 +146,27 @@ def assemble():
         digest = hashlib.file_digest(f, 'sha256').hexdigest()
     report = {'media': probe, 'sha256': digest, 'bytes': target.stat().st_size,
               'audio_mix': audio_stats, 'full_decode': 'passed', 'native_ap_validated': False}
+    diagnostics = [json.loads(next(Path('assembled').rglob(f'part{i}-diagnostics.json')).read_text()) for i in range(8)]
+    report['baked_pose_diagnostics'] = {
+        'contact_samples': sum(d['contact_samples'] for d in diagnostics),
+        'contact_errors_over_1mm': sum(len(d['contact_errors_over_1mm']) for d in diagnostics),
+        'max_error_mm': max(d['max_error_mm'] for d in diagnostics),
+        'collision_samples': sum(len(d['collision_errors']) for d in diagnostics),
+        'max_collision_depth_mm': max(d['max_collision_depth_mm'] for d in diagnostics),
+        'min_screen_clearance_mm': min(d['min_screen_clearance_mm'] for d in diagnostics),
+    }
+    report['bakes'] = [json.loads(next(Path('assembled').rglob(f'part{i}-provenance.json')).read_text()) for i in range(8)]
+    boundaries = [json.loads(next(Path('assembled').rglob(f'part{i}-boundary-poses.json')).read_text()) for i in range(8)]
+    report['segment_boundaries'] = []
+    for i in range(7):
+        before, after = boundaries[i][-1], boundaries[i + 1][0]
+        distances = [math.dist(bone['tail'], after['rigs'][name]['bones'][key]['tail']) * 1000
+                     for name, arm in before['rigs'].items() for key, bone in arm['bones'].items()]
+        report['segment_boundaries'].append({'time': after['time'], 'max_bone_tail_step_mm': max(distances)})
     (delivery / 'validation.json').write_text(json.dumps(report, indent=2))
-    times = [4.76, 10.5, 15.223, 26, 31, 38, 45.45, 55, 62.376, 78, 92, 101, 108.12, 115.248, 125.05, 132, 140, 146.7]
-    sheet = Image.new('RGB', (1920, 6 * 384), '#101827')
+    times = [4.76, 10.5, 15.223, 26, 31, 38, 45.45, 55, 62.376, 78, 92, 101, 108.12, 111.36, 115.248, 125.05, 132, 146.7]
+    times = sorted(set(times + [t + delta for t in range(20,141,20) for delta in (-1/60,0)]))
+    sheet = Image.new('RGB', (1920, math.ceil(len(times) / 3) * 384), '#101827')
     draw = ImageDraw.Draw(sheet)
     for i, t in enumerate(times):
         frame = delivery / f'frame-{i}.png'
@@ -158,6 +176,24 @@ def assemble():
         draw.text((col * 640 + 10, row * 384 + 5), f'{t:.3f} s', fill='white')
         frame.unlink()
     sheet.save(delivery / 'final-review.jpg', quality=90)
+    (delivery / 'pose-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
+    quality = report['baked_pose_diagnostics']
+    notes = (
+        'Desultory Signals AT 18: dedicated handcam render, 1920 x 1080, 60 FPS, '
+        '9045 frames, 150.750 seconds. Full decode and stream checks passed.\n\n'
+        'The original chart and all 2026 note identities are retained. Fingering was refined '
+        'after inspecting baked poses: recurring Flick/Drag strokes, centre handoffs, '
+        'stable left/right chord assignments, held-note exchanges, and legal judge-strip spacing.\n\n'
+        f"Baked diagnostics: {quality['max_error_mm']:.3f} mm maximum pad error; "
+        f"{quality['contact_errors_over_1mm']} contact samples over 1 mm; "
+        f"{quality['collision_samples']} unresolved collision samples; "
+        f"{quality['min_screen_clearance_mm']:.3f} mm minimum screen clearance. "
+        'These are animation diagnostics, not a native Phigros AP validation. '
+        'Nonzero residuals remain documented in validation.json and pose-diagnostics.json.\n\n'
+        f'SHA-256: `{digest}`\n'
+    )
+    Path('DELIVERY.md').write_text(notes)
+    (delivery / 'DELIVERY.md').write_text(notes)
     for p in [*videos, listing, mixed]:
         p.unlink()
 
