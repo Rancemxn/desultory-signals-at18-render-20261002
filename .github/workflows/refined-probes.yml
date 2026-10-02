@@ -11,13 +11,13 @@ jobs:
       fail-fast: false
       max-parallel: 5
       matrix:
-        part: [0, 1, 2, 3, 4]
+        part: [3]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/runtime
       - run: |
           mkdir -p output/plan
-          gh release download refined-plan-v11 --pattern 'plan.psap' --pattern 'motion-plan.json' --dir output/plan
+          gh release download refined-plan-v14 --pattern 'plan.psap' --pattern 'motion-plan.json' --dir output/plan
         env:
           GH_TOKEN: ${{ github.token }}
       - run: python -u refined_task.py probe ${{ matrix.part }}

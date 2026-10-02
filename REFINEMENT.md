@@ -72,3 +72,7 @@ Long idle gaps now blend the old grip toward the relaxed pose. New contacts
 seed IK from the prepared joint pose rather than the last unrelated contact.
 At 112.87 s each Flick continues into its coincident Hold on the same finger;
 the following outer-left Tap uses the little finger to preserve the Hold.
+
+The two index-finger Drag routes near 111 s occupy separate vertical lanes
+inside their original central judgement strips. This removes the opposing
+index-finger intersection without changing any note time.
