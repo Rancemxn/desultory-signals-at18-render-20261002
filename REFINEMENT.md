@@ -18,8 +18,9 @@ and media metadata/decoding.
 - The 84–89 s pair uses an authored two-hand relay: one hand receives the held
   contact while the other prepares the later central corridor. Note coverage
   remains continuous across different fingers.
-- The dense 111 s figure combines compatible Drags and carries two Flicks into
-  their following Drags. Completed standalone Flicks release after 16 ms;
+- The dense 111 s figure combines compatible Drags and transfers fast Flick-to-Drag
+  phrases from the ring finger to the index finger. Coincident Flick heads can
+  share one swipe when individual note coverage passes. Completed standalone Flicks release after 16 ms;
   stationary Taps use at most 30 ms dwell, retaining their original DOWN time.
 - Fingering search includes ten fingers, penalizes frequent use and rapid
   transfers, and rejects inverted same-hand finger order through a high cost.
