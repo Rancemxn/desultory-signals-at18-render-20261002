@@ -1,0 +1,31 @@
+name: Rendering runtime
+description: Install isolated Python and Blender runtime
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.13'
+    - uses: actions/cache@v4
+      id: blender
+      with:
+        path: /home/runner/blender
+        key: blender-linux-4.5.14
+    - shell: bash
+      run: |
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq ffmpeg xvfb xauth libegl1 libxkbcommon0 libsm6 libxi6 libxrender1
+        python -m pip install --quiet numpy shapely z3-solver rich skia-python PySide6 av lz4 pyusb requests Pillow
+        if [ ! -x /home/runner/blender/blender ]; then
+          curl -fL --retry 4 https://download.blender.org/release/Blender4.5/blender-4.5.14-linux-x64.tar.xz -o /tmp/blender.tar.xz
+          echo '9ba871ff2ecd36526b77432745980b7e6664ecd0c7ca11c48849073dcfe06da3 /tmp/blender.tar.xz' | sha256sum -c -
+          mkdir -p /home/runner/blender
+          tar -xJf /tmp/blender.tar.xz -C /home/runner/blender --strip-components=1
+          rm /tmp/blender.tar.xz
+        fi
+        printf '%s\n' '#!/bin/sh' 'export LIBGL_ALWAYS_SOFTWARE=1 LP_NUM_THREADS=4 OMP_NUM_THREADS=4' 'exec xvfb-run -a -s "-screen 0 1920x1080x24" /home/runner/blender/blender "$@"' > /home/runner/blender-headless
+        chmod +x /home/runner/blender-headless
+        mkdir -p inputs
+        gh release download render-inputs --pattern 'desultory-signals.zip' --pattern 'hands.blend' --pattern 'resources.zip' --dir inputs --clobber
+      env:
+        GH_TOKEN: ${{ github.token }}

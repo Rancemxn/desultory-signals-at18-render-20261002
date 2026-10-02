@@ -1,0 +1,56 @@
+name: Baseline bake and review
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  plan:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - run: python -u task.py plan
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: baseline-plan
+          path: |
+            output/plan/*.json
+            output/plan/*.psap
+            output/plan/*.log
+          retention-days: 7
+      - run: gh release create baseline-plan output/plan/motion-plan.json output/plan/plan.psap output/plan/planning-diagnostics.json --title 'Baseline planning data' --notes 'Unedited baseline for manual review.'
+        env:
+          GH_TOKEN: ${{ github.token }}
+  bake:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: baseline-plan
+          path: output/plan
+      - run: python -u task.py bake ${{ matrix.part }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: baseline-bake-${{ matrix.part }}
+          path: |
+            output/part*/handcam.blend
+            output/part*/*.json
+            output/part*/*.log
+            output/part*/review.jpg
+          retention-days: 7
+      - run: |
+          gh release upload baseline-plan output/part${{ matrix.part }}/review-${{ matrix.part }}.jpg output/part${{ matrix.part }}/diagnostics-${{ matrix.part }}.json --clobber
+        env:
+          GH_TOKEN: ${{ github.token }}

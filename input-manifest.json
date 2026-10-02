@@ -1,0 +1,20 @@
+[
+  {
+    "name": "resources.zip",
+    "size": 3911944,
+    "url": "https://github.com/Rancemxn/desultory-signals-at18-render-20261002/releases/download/render-inputs/resources.zip",
+    "sha256": "3c2cd4ee81650302a56b4a73b4bdeb5da5bcf19fd7e23602dc73bd21649a4e96"
+  },
+  {
+    "name": "hands.blend",
+    "size": 12502272,
+    "url": "https://github.com/Rancemxn/desultory-signals-at18-render-20261002/releases/download/render-inputs/hands.blend",
+    "sha256": "6cca25beb3f48460f977f1e47f76612eb87900b64b71cc8b4627d52e54561f40"
+  },
+  {
+    "name": "desultory-signals.zip",
+    "size": 30439980,
+    "url": "https://github.com/Rancemxn/desultory-signals-at18-render-20261002/releases/download/render-inputs/desultory-signals.zip",
+    "sha256": "033e453db86f7fb6100a72336d0d52442c86e9244daa6327ceecd30321079047"
+  }
+]
