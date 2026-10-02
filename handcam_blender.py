@@ -813,6 +813,7 @@ def main(job):
                 evaluated.to_mesh_clear()
         return lowest
     contact_rotations = {}
+    previous_down = set()
     contact_root_heights = {}
     relaxed_rotations = {key: [rigs[key[0]].pose.bones[name].rotation_euler.copy() for name in FINGERS[key[1]]]
                          for key in tracks}
@@ -1002,10 +1003,25 @@ def main(job):
             if job.get('finger_motion') == 'whole_finger' and key[1] != 'thumb':
                 bones = [rigs[key[0]].pose.bones[name] for name in FINGERS[key[1]]]
                 pose = contact_rotations.get(key, relaxed_rotations[key])
-                for bone, angles in zip(bones, pose):
-                    bone.rotation_euler = angles
                 events = tracks[key]
                 i = bisect.bisect_right(events, t, key=lambda c: c['start']) - 1
+                previous = events[i] if i >= 0 else None
+                following = events[i + 1] if i + 1 < len(events) else None
+                if samples[key][2] and key not in previous_down:
+                    # Start contact IK from the prepared pose, not a pose cached
+                    # at the end of an unrelated earlier contact.
+                    pose = [bone.bone.convert_local_to_pose(bone.matrix,bone.bone.matrix_local,
+                        parent_matrix=bone.parent.matrix,parent_matrix_local=bone.parent.bone.matrix_local,
+                        invert=True).to_euler('XYZ') for bone in bones]
+                elif not samples[key][2] and previous and (
+                        following is None or following['start']-previous['end']>job.get('stroke_gap_limit',.75)):
+                    # A long idle gap releases the old grip. Keeping its curled
+                    # FK pose indefinitely can cross a neighbour's new stroke.
+                    settle = smooth((t-previous['end'])/.18)
+                    pose = [a.to_quaternion().slerp(b.to_quaternion(),settle).to_euler('XYZ')
+                            for a,b in zip(pose,relaxed_rotations[key])]
+                for bone, angles in zip(bones, pose):
+                    bone.rotation_euler = angles
                 if not samples[key][2] and 0 <= i < len(events) - 1:
                     previous, following = events[i:i + 2]
                     gap = following['start'] - previous['end']
@@ -1108,6 +1124,7 @@ def main(job):
             for arm in rigs.values():
                 arm.keyframe_insert('location', frame=frame)
                 arm.keyframe_insert('rotation_euler', frame=frame)
+        previous_down = {key for key,value in samples.items() if value[2]}
         for key, pad in pads.items():
             arm = rigs[key[0]]
             pad_offsets[key] = pad - arm.matrix_world @ arm.pose.bones[FINGERS[key[1]][-1]].tail

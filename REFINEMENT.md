@@ -67,3 +67,8 @@ The new workflow first bakes focused numerical probes. The intended full export
 uses one continuous bake shared by all render segments, avoiding independent
 IK histories at segment boundaries. Actual full-song pose quality must be
 reported from the completed bake; geometric planning success alone is insufficient.
+
+Long idle gaps now blend the old grip toward the relaxed pose. New contacts
+seed IK from the prepared joint pose rather than the last unrelated contact.
+At 112.87 s each Flick continues into its coincident Hold on the same finger;
+the following outer-left Tap uses the little finger to preserve the Hold.
