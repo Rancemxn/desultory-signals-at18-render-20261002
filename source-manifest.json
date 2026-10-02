@@ -14,7 +14,7 @@
     "handcam.py": "052c95655e8fab3a11619d3346d08b679b0e914dc872a1a62b70d49283a755a3",
     "handcam_avoidance.py": "31ced9c8999a11b8d88d49ea121c753ed16e5cb2380b2c1830471b924a4ef617",
     "handcam_blender.py": "7da39b8eebd94a84fa0b771e3e339578381aa4b746f572e097ee37272fbbb8fe",
-    "handcam_motion.py": "52e8b0e9f42425873ea0bc53ff523870a8558d3138e83470839a2eb79c19c123",
+    "handcam_motion.py": "e475b6f532cf5269486a2e469e352ecbece5635df6bb2425cdb0da0efaa0d9e5",
     "handcam_render.py": "c7194e5c4e36e9ad74e71dd9cef4530b0f970a9a734ec4d4315cda85d5027919",
     "LICENSE": "c843583b8a523b4172e54b53721e09d0d852d82e9a548e46fa15b8adb0edce27",
     "main.py": "f016abe11a0bee3b2eaa2f586f5718cdb975f00e844a7c072dbe3014e16b752d",

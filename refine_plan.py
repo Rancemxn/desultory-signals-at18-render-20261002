@@ -44,6 +44,31 @@ def sample(c, t):
     return [round(t,3), *point_at(c['points'], t)]
 
 
+def legal_point(nid,t,xy):
+    line,note=notes[nid]
+    center=line.pos(t,note.offset)
+    zone=JudgeArea(center,cmath.exp(1j*(line.angle@t)),chart.width,chart.height,
+                   JUDGE_HALF_DRAG if note.type in (NoteType.DRAG,NoteType.FLICK) else JUDGE_HALF_TAP).poly
+    return zone.buffer(1e-8).covers(Point(xy[0]*chart.width,xy[1]*chart.height))
+
+
+# Several decorative lines jump off-screen at judgement. Choose a reachable
+# point along their legal strip instead of sending a tap to the opposite edge.
+for c in contacts:
+    if c['kind']=='tap' and any(p[2]<=.011 or p[2]>=.989 for p in c['points']):
+        nid=c['note_ids'][0]
+        if legal_point(nid,notes[nid][1].seconds,(c['points'][0][1],.8)):
+            for p in c['points']: p[2]=.8
+            edits.append({'kind':'offscreen_strip_landing','notes':c['note_ids'],'time':c['start']})
+    if c['kind']=='hold' and len(c['note_ids'])==1 and max(p[1] for p in c['points'])-min(p[1] for p in c['points'])<.03:
+        nid=c['note_ids'][0]; note=notes[nid][1]
+        if (max(p[2] for p in c['points'])-min(p[2] for p in c['points'])>.15 and
+            all(legal_point(nid,float(t),(point_at(c['points'],float(t))[0],.8))
+                for t in np.linspace(note.seconds,note.seconds+max(0,note.hold-.001),max(2,math.ceil(note.hold/.01))))):
+            for p in c['points']: p[2]=.8
+            edits.append({'kind':'stable_vertical_hold_strip','notes':[nid],'start':c['start']})
+
+
 # These central holds travel vertically while wide chords stay at the bottom.
 # Phigros holds allow movement along the judge strip: park them near the chords
 # instead of stretching one palm between opposite screen edges.
@@ -66,6 +91,26 @@ a['note_ids'] = b['note_ids'] = [1087,310]
 a['manual_role'],b['manual_role']='left outer-finger hold exchange','right outer-finger hold exchange'
 edits.append({'kind':'paired_hold_exchange','time':meeting,'notes':[1087,310],
               'meeting_distance_mm':1000*math.dist(world_xy(point_at(ap,meeting),screen),world_xy(point_at(bp,meeting),screen))})
+
+
+# The 91.5-second pair jumps between distant lanes eight times. Hand the held
+# contacts between waiting fingers at each transition instead of moving both
+# wrists across the tablet in 20 ms. UP/DOWN share the same millisecond.
+for nid in (622,1003):
+    source=by_note(nid)
+    cuts=[source['start']]+[round((p[0]+q[0])/2,3) for p,q in zip(source['points'],source['points'][1:])
+                          if abs(p[1]-q[1])>.1]+[source['end']]
+    contacts.remove(source)
+    for low,high in zip(cuts,cuts[1:]):
+        c=copy.deepcopy(source)
+        points=[[low,*point_at(source['points'],low)]]
+        points += [p[:] for p in source['points'] if low<p[0]<high-.001]
+        points += [[round(high-.001,3),*point_at(source['points'],high-.001)]]
+        x=sum(p[1] for p in points)/len(points)
+        c.update(start=low,end=high,beat=low,points=points,manual_hand='left' if x<.5 else 'right',
+                 manual_role='continuous hold handoff at lane jump')
+        contacts.append(c)
+    edits.append({'kind':'lane_jump_hold_handoffs','notes':[nid],'times':cuts[1:-1]})
 
 
 # The same short Flick/Drag figure recurs in the opening, the rotating middle,
@@ -149,7 +194,7 @@ for phrase in phrases:
 # Long holds spreading from the centre need one hand each. The first two opening
 # holds use thumbs so that the long-held contact does not reserve an index finger.
 locks={}
-for nid,hand,finger in [(933,'left','thumb'),(1356,'right','thumb'),
+for nid,hand,finger in [(933,'left','index'),(1356,'right','index'),
                         (251,'right','index'),(1029,'left','index'),
                         (577,'right','thumb'),(943,'left','thumb'),(1187,'right','thumb'),
                         (1133,'left','index')]:
@@ -213,7 +258,7 @@ keys=[(h,f) for h in ('left','right') for f in ('index','middle','ring','thumb')
 offsets=np.array([plan['profile']['fingers'][f"{-1 if h=='left' else 1}:{f}"]['offset'][:2] for h,f in keys])
 samehand=np.array([[ka[0]==kb[0] for kb in keys] for ka in keys])
 samefinger=np.eye(8,dtype=bool)
-labels=np.array([keys.index((c['hand'],c['finger'])) for c in contacts])
+labels=np.zeros(len(contacts),dtype=int)
 unary=np.zeros((len(contacts),8))
 neighbors=[[] for _ in contacts]
 locked={i:keys.index(locks[id(c)]) for i,c in enumerate(contacts) if id(c) in locks}
@@ -222,10 +267,28 @@ for i,c in enumerate(contacts):
     x=sum(p[1] for p in c['points'])/len(c['points'])
     for k,(hand,finger) in enumerate(keys):
         side=-1 if hand=='left' else 1
-        unary[i,k]=100000*max(0.,-side*(x-.5)-.035)**2+{'index':0.,'middle':.3,'ring':2.,'thumb':15.}[finger]
+        unary[i,k]=100000*max(0.,-side*(x-.5)-.035)**2+{'index':0.,'middle':.3,'ring':2.,'thumb':60.}[finger]
         if c.get('manual_hand') and hand!=c['manual_hand']: unary[i,k]+=1e9
     if i in locked:
         unary[i,:]=1e12;unary[i,locked[i]]=0;labels[i]=locked[i]
+
+# Start from a feasible side-local assignment, rather than the crossed baseline.
+# Single-label descent cannot escape a whole chain whose occupied fingers have
+# all been exchanged between hands.
+active=[]
+for i,c in enumerate(contacts):
+    active=[j for j in active if contacts[j]['end']>c['start']+1e-9]
+    occupied={int(labels[j]) for j in active}
+    if i not in locked:
+        choices=[k for k in range(8) if k not in occupied]
+        future_fixed={locked[j] for j in locked if c['start']<=contacts[j]['start']<c['end']}
+        preferred=[k for k in choices if k not in future_fixed]
+        if preferred: choices=preferred
+        if not choices: raise ValueError('No available finger in manual initialization')
+        labels[i]=min(choices,key=lambda k:unary[i,k])
+    elif int(labels[i]) in occupied:
+        raise ValueError(('Conflicting authored finger lock',c['note_ids']))
+    active.append(i)
 
 for i,a0 in enumerate(contacts):
     for j in range(i+1,len(contacts)):

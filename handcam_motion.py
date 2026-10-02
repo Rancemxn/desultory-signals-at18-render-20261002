@@ -330,7 +330,20 @@ def wrist_pose(contacts, rests, side, t, job, offsets, neutral_offsets=None, ind
     anchors = []
     candidates = index.guides[hand].at(t) if index else events
     active_events = [c for c in candidates if c['start'] <= t < c['end']]
-    for c in active_events or candidates:
+    guided = active_events or candidates
+    if active_events:
+        # A held finger must not prevent the palm from preparing the other
+        # fingers for a chord. Reach projection in the baker keeps the held pad
+        # fixed while the wrist approaches the next available finger's anchor.
+        active_fingers = {c['finger'] for c in active_events}
+        upcoming = {}
+        for c in candidates:
+            if c['finger'] not in active_fingers and c['start'] > t and c.get('prepare', c['start'] - .2) <= t:
+                old = upcoming.get(c['finger'])
+                if old is None or c['start'] < old['start']:
+                    upcoming[c['finger']] = c
+        guided = [*active_events, *upcoming.values()]
+    for c in guided:
         prepare = c.get('prepare', c['start'] - .2)
         release = c.get('release_until', c['end'] + .15)
         if prepare <= t <= release:
