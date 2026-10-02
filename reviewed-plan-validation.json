@@ -1,0 +1,19 @@
+{
+  "all_2026_notes_retained": true,
+  "psap_lifecycle_validation": "passed",
+  "judge_strip_geometry": "passed for all notes and 20 ms hold samples",
+  "native_ap_validated": false,
+  "block_area_geometry": {
+    "areas": 160,
+    "violations": 0,
+    "sample_step_ms": 1,
+    "event_boundaries_checked": true,
+    "native_version": "4.0.1 / 157"
+  },
+  "plan_revision": "reviewed-v6",
+  "contact_segments": 1632,
+  "authored_edits": 253,
+  "assignment_changes": 1121,
+  "plan_sha256": "bf50bc0a24a4136a0dd73a8bba6d51126efc33b36cf9eeb7fd3f17651f95f822",
+  "psap_sha256": "936acbb8e031b44f318d74f85555efa7972122795835a391e6fc230a965c5dff"
+}

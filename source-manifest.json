@@ -61,7 +61,12 @@
     "block_assets/spark.png": "fe1a54ef26f7d95d781f5d801a28ad82a7927c567218cda79e2a66a5988a7984",
     ".github/actions/runtime/action.yml": "26f209690611c165a71b63b7841a132b31af4a5074bdaa0fb60a2f4693708e0b",
     "BLOCK_AREAS.md": "d73ff120ad0a466330aadc20b523987117f4050959f1e2773b1c1af91b9bac6d",
-    "test_block_render.py": "ec7b91874993681c83274424f39527adb615fdd0f35ae2a2151b61a4bab93ac4"
+    "test_block_render.py": "ec7b91874993681c83274424f39527adb615fdd0f35ae2a2151b61a4bab93ac4",
+    "README.md": "841c3455fdb18e1dd06193090769f4a8252e876a27a60419e5fe237ebc8860a5",
+    "task.py": "d55593bf23a3cafcb8ea5bcace303fc649335641a772cf729784e2497faa54b5",
+    "delivery_report.py": "ae593c597961156406aaf856d207bce30ab8705a81d2c5d100675a110001ac17",
+    "reviewed-plan-validation.json": "ed0cfea6ece5dec5212990bf0e86f7538c5592f8cdaa84a06db8957682ec9f7c",
+    ".github/workflows/final.yml": "61639a2904c201b49638fd3f3a7d2a6999c18b9d345911017e64e1a1a146356d"
   },
   "isolation_note": "Task-specific snapshot; main project is not modified. Local relay scripts excluded."
 }

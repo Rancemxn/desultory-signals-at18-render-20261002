@@ -115,6 +115,7 @@ def render(part):
 
 def assemble():
     from PIL import Image, ImageDraw
+    from delivery_report import attach_plan_review, delivery_notes
     from handcam import unpack, prepare_resources
     from chart import load_chart
     from phigros_renderer import PhigrosRenderer, mix_audio
@@ -163,6 +164,7 @@ def assemble():
         distances = [math.dist(bone['tail'], after['rigs'][name]['bones'][key]['tail']) * 1000
                      for name, arm in before['rigs'].items() for key, bone in arm['bones'].items()]
         report['segment_boundaries'].append({'time': after['time'], 'max_bone_tail_step_mm': max(distances)})
+    attach_plan_review(report, ROOT / 'reviewed-plan-validation.json')
     (delivery / 'validation.json').write_text(json.dumps(report, indent=2))
     times = [4.76, 10.5, 15.223, 26, 31, 38, 45.45, 55, 62.376, 78, 92, 101, 108.12, 111.36, 115.248, 125.05, 132, 146.7]
     times = sorted(set(times + [t + delta for t in range(20,141,20) for delta in (-1/60,0)]))
@@ -177,21 +179,7 @@ def assemble():
         frame.unlink()
     sheet.save(delivery / 'final-review.jpg', quality=90)
     (delivery / 'pose-diagnostics.json').write_text(json.dumps(diagnostics, indent=2))
-    quality = report['baked_pose_diagnostics']
-    notes = (
-        'Desultory Signals AT 18: dedicated handcam render, 1920 x 1080, 60 FPS, '
-        '9045 frames, 150.750 seconds. Full decode and stream checks passed.\n\n'
-        'The original chart and all 2026 note identities are retained. Fingering was refined '
-        'after inspecting baked poses: recurring Flick/Drag strokes, centre handoffs, '
-        'stable left/right chord assignments, held-note exchanges, and legal judge-strip spacing.\n\n'
-        f"Baked diagnostics: {quality['max_error_mm']:.3f} mm maximum pad error; "
-        f"{quality['contact_errors_over_1mm']} contact samples over 1 mm; "
-        f"{quality['collision_samples']} unresolved collision samples; "
-        f"{quality['min_screen_clearance_mm']:.3f} mm minimum screen clearance. "
-        'These are animation diagnostics, not a native Phigros AP validation. '
-        'Nonzero residuals remain documented in validation.json and pose-diagnostics.json.\n\n'
-        f'SHA-256: `{digest}`\n'
-    )
+    notes = delivery_notes(report)
     Path('DELIVERY.md').write_text(notes)
     (delivery / 'DELIVERY.md').write_text(notes)
     for p in [*videos, listing, mixed]:
