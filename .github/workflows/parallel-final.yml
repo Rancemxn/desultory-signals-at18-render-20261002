@@ -115,13 +115,18 @@ jobs:
         run: |
           gh api "repos/$GH_REPO/actions/runs/$BAKE_RUN/artifacts" > artifacts.json
           python - <<'PY'
-          import json, os, subprocess
+          import hashlib, json, os, subprocess, zipfile
           artifacts = json.load(open('artifacts.json'))['artifacts']
           chosen = [a for a in artifacts if a['name'].startswith('parallel-bake-')]
           assert len(chosen) == 8
           for artifact in chosen:
               with open(artifact['name'] + '.zip', 'wb') as out:
                   subprocess.run(['gh', 'api', artifact['archive_download_url']], stdout=out, check=True)
+              with zipfile.ZipFile(artifact['name'] + '.zip') as archive:
+                  assert archive.testzip() is None
+                  provenance = json.loads(archive.read(next(n for n in archive.namelist() if n.endswith('provenance.json'))))
+                  with archive.open(next(n for n in archive.namelist() if n.endswith('handcam.blend'))) as stream:
+                      assert hashlib.file_digest(stream, 'sha256').hexdigest() == provenance['blend_sha256']
           PY
           sha256sum parallel-bake-*.zip > SHA256SUMS.txt
           gh release create refined-v21-bake-backup parallel-bake-*.zip SHA256SUMS.txt --target "$SOURCE_SHA" --title 'V21 full bake backup — eight parts' --notes 'Saved animation and numerical reports used by the V21 video. Seven same-time seam checks passed. Pose limitations remain documented in the video delivery.'
