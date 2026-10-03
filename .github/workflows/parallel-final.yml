@@ -102,3 +102,26 @@ jobs:
           name: parallel-final-delivery
           path: delivery
           retention-days: 7
+  backup:
+    needs: [verify, assemble]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BAKE_RUN: ${{ inputs.bake_run }}
+          SOURCE_SHA: ${{ needs.verify.outputs.source }}
+        run: |
+          gh api "repos/$GH_REPO/actions/runs/$BAKE_RUN/artifacts" > artifacts.json
+          python - <<'PY'
+          import json, os, subprocess
+          artifacts = json.load(open('artifacts.json'))['artifacts']
+          chosen = [a for a in artifacts if a['name'].startswith('parallel-bake-')]
+          assert len(chosen) == 8
+          for artifact in chosen:
+              with open(artifact['name'] + '.zip', 'wb') as out:
+                  subprocess.run(['gh', 'api', artifact['archive_download_url']], stdout=out, check=True)
+          PY
+          sha256sum parallel-bake-*.zip > SHA256SUMS.txt
+          gh release create refined-v21-bake-backup parallel-bake-*.zip SHA256SUMS.txt --target "$SOURCE_SHA" --title 'V21 full bake backup — eight parts' --notes 'Saved animation and numerical reports used by the V21 video. Seven same-time seam checks passed. Pose limitations remain documented in the video delivery.'
