@@ -1,0 +1,118 @@
+name: V21 constrained seam repair and full review
+on:
+  workflow_dispatch:
+    inputs:
+      bake_run:
+        description: Completed eight-part bake with only the 60 s seam failing
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  repair:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: parallel-bake-*
+          path: baked
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: parallel-full-review
+          path: original-review
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - run: |
+          python - <<'PY'
+          import json
+          review = json.load(open('original-review/seam-validation.json'))
+          assert [s['time'] for s in review['seams'] if s['distance_mm'] > 1] == [60.0]
+          PY
+          /home/runner/blender-headless --background --factory-startup --python-exit-code 1 --python reconcile_pose_seam.py -- baked/parallel-bake-2 baked/parallel-bake-3
+          /home/runner/blender-headless --background --disable-autoexec baked/parallel-bake-3/handcam.blend --python-exit-code 1 --python capture_bake_boundaries.py -- baked/parallel-bake-3/job.json 20
+          python -u parallel_task.py audit baked
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-bake-0
+          path: |
+            baked/parallel-bake-0/*.json
+            baked/parallel-bake-0/*.log
+            baked/parallel-bake-0/handcam.blend
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-bake-1
+          path: |
+            baked/parallel-bake-1/*.json
+            baked/parallel-bake-1/*.log
+            baked/parallel-bake-1/handcam.blend
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-bake-2
+          path: |
+            baked/parallel-bake-2/*.json
+            baked/parallel-bake-2/*.log
+            baked/parallel-bake-2/handcam.blend
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-bake-3
+          path: |
+            baked/parallel-bake-3/*.json
+            baked/parallel-bake-3/*.log
+            baked/parallel-bake-3/handcam.blend
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-bake-4
+          path: |
+            baked/parallel-bake-4/*.json
+            baked/parallel-bake-4/*.log
+            baked/parallel-bake-4/handcam.blend
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-bake-5
+          path: |
+            baked/parallel-bake-5/*.json
+            baked/parallel-bake-5/*.log
+            baked/parallel-bake-5/handcam.blend
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-bake-6
+          path: |
+            baked/parallel-bake-6/*.json
+            baked/parallel-bake-6/*.log
+            baked/parallel-bake-6/handcam.blend
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-bake-7
+          path: |
+            baked/parallel-bake-7/*.json
+            baked/parallel-bake-7/*.log
+            baked/parallel-bake-7/handcam.blend
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-full-review
+          path: output/full/*.json
+          retention-days: 7
+

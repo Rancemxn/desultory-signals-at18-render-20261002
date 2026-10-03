@@ -95,7 +95,10 @@
     "repair_swipe_order.py": "251d699f4bbb4770fac27c0f94abe4fd3fd109d32e82531e74c306d61abd5d0f",
     "restore_flicks.py": "7ed5167310fb5d4710a8d6e11b7af2647db43de60dd6d8ee75f681b9dd3e5380",
     "spread_contacts.py": "538ec4aef53d85d2afc646b3cd20ba2d4a7aafa6f49e224fe82edd05dd378499",
-    ".github/workflows/parallel-bake.yml": "3e3f6ff84add5c7f76c4b3c2a4774a757c138f0de15793fd8d55e5952e629bf5"
+    ".github/workflows/parallel-bake.yml": "3e3f6ff84add5c7f76c4b3c2a4774a757c138f0de15793fd8d55e5952e629bf5",
+    "reconcile_pose_seam.py": "d77e93d219bc9a79cb114c36fcac17c0eba4db0e98736ad307bed7df6037fd48",
+    ".github/workflows/parallel-repair.yml": "2a44c27e790b14d22922e85c764ff1401022572b404c03c16d4be4cd61084e07",
+    ".github/workflows/parallel-final.yml": "35a984f1c194d0c69a87c636b278df62061161abced79060a8a45fe2d8902f7d"
   },
   "isolation_note": "Task-specific snapshot; main project is not modified. Local relay scripts excluded.",
   "refined_at": "2026-10-02T19:05:12.402926+00:00",

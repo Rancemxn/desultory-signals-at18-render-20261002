@@ -26,7 +26,7 @@ jobs:
           import json, os
           run = json.load(open('run.json'))
           assert run['conclusion'] == 'success'
-          assert run['path'] == '.github/workflows/parallel-bake.yml'
+          assert run['path'] in ('.github/workflows/parallel-bake.yml', '.github/workflows/parallel-repair.yml')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
               out.write('sha=' + run['head_sha'] + '\n')
           PY
