@@ -105,7 +105,10 @@ def main():
                              and r['status'] in LIVE),None)
             if existing is None:
                 previous = {r['databaseId'] for r in remote}
-                gh('workflow','run','batch-chart.yml','-f','chart='+key)
+                options=['-f','chart='+key]
+                release=state['charts'].get(key,{}).get('plan_release')
+                if release:options+=['-f','plan_release='+release]
+                gh('workflow','run','batch-chart.yml',*options)
                 for attempt in range(18):
                     time.sleep(5)
                     remote = runs()

@@ -217,7 +217,7 @@ def repair_topology(labels,unary,neighbors,contacts=None):
     raise ValueError('No non-overlapping ordered finger assignment in conflict neighborhood')
 
 
-def split_order_conflicts(contacts,screen,max_span):
+def split_order_conflicts(contacts,screen,max_span,geometry=None):
     """Retain a crossing Hold path while permitting overlapping finger relays."""
     bad_ids={n for v in audit(contacts,screen)['same_hand_crossings'] for n in v['a']+v['b']}
     result=[]
@@ -234,6 +234,11 @@ def split_order_conflicts(contacts,screen,max_span):
             c['points']=[[start,*point_at(old['points'],start)],
                 *[p for p in old['points'] if start<p[0]<end-.001],
                 [round(end-.001,3),*point_at(old['points'],end-.001)]]
+            if geometry is not None:
+                from contact_refinement import validate_contact
+                if validate_contact(geometry,c,c['points']):
+                    from general_refinement import legal_path
+                    c['points']=legal_path(geometry,c,screen)
             result.append(c)
     return sorted(result,key=lambda c:(c['start'],c['pointer']))
 
@@ -277,6 +282,7 @@ def main():
     parser.add_argument('source',type=Path)
     parser.add_argument('output',type=Path)
     parser.add_argument('--beam',type=int,default=192)
+    parser.add_argument('--chart',type=Path,help='Chart used to validate newly created relay endpoints')
     parser.add_argument('--special',nargs='*',type=Path,default=[])
     args = parser.parse_args()
     plan = json.loads(args.source.read_text())
@@ -310,11 +316,20 @@ def main():
         try:
             labels = repair_topology(labels,unary,neighbors,contacts)
         except ValueError:
+            geometry=None
+            if args.chart:
+                import zipfile
+                from chart import load_chart
+                from contact_refinement import ContactGeometry
+                with zipfile.ZipFile(args.chart) as z:
+                    chart=load_chart(z.read('chart.json').decode('utf-8-sig'))
+                geometry=ContactGeometry(chart,physical_screen=plan['physical_screen'],
+                    extra_clearance_m=plan.get('comfort',{}).get('extra_block_clearance_m',0.))
             source=copy.deepcopy(contacts)
             for c,label in zip(source,labels):
                 c['hand'],c['finger']=keys[label]
             for span in (.8,.4,.2):
-                trial=split_order_conflicts(source,plan['physical_screen'],span)
+                trial=split_order_conflicts(source,plan['physical_screen'],span,geometry)
                 if len(trial)==len(source):
                     raise ValueError('No relay-capable Hold at finger-order conflict')
                 u,edges=graph(trial,plan)

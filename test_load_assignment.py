@@ -22,6 +22,17 @@ def plan(contacts):
 
 
 class LoadAssignmentTests(unittest.TestCase):
+    def test_joined_drags_do_not_span_another_contact_on_same_finger(self):
+        chart,_=fixture(NoteType.DRAG,[8.],[1.])
+        p=Planner(chart,Settings(fingers=('index',),speed_limits=False),default_profile())
+        a=contact(1.,1.012,kind='drag',nid=0)
+        intervening=contact(1.07,1.13,nid=1)
+        b=contact(1.10,1.112,kind='drag',nid=2)
+        a['effort']=b['effort']=.018
+        result=p.join_drags([a,b,intervening])
+        self.assertFalse(any(set(c['note_ids'])=={0,2} for c in result))
+        self.assertFalse(p.contact_occupancy_valid(result))
+
     def test_load_scores_and_assignments_ignore_travel_distance(self):
         a=[contact(i*.16,i*.16+.024,nid=i) for i in range(10)]
         p=plan(a); keys=assignment_keys(p)

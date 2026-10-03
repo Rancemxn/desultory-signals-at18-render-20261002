@@ -290,6 +290,9 @@ class Planner:
     def constraints(self, record, state, side, finger):
         """Return physical violations and normalized movement/pose costs."""
         t, end = record['start'], record['end']
+        if any(c['hand']==record['hand'] and c['finger']==finger and
+               max(t,c['start'])<min(end,c['end'])-1e-9 for c in state.contacts):
+            return ['occupied'],0.,0.
         previous = next((c for c in reversed(state.contacts) if c['hand'] == record['hand'] and c['finger'] == finger), None)
         violations, movement, posture = [], 0., 0.
         xy = world_xy(record['points'][0][1:], self.physical)
@@ -562,6 +565,7 @@ class Planner:
                     expanded.extend(self.flick_on_hold(task,state))
                     if not self.settings.speed_limits:
                         expanded.extend(self.flick_after_hold(task,state))
+                expanded=[s for s in expanded if self.contact_occupancy_valid(s.contacts)]
             if not expanded:
                 if self.settings.judgement_windows:
                     for state in beam:
@@ -573,6 +577,7 @@ class Planner:
             # Retain different fingering histories, not eight tiny variations of one fingertip.
             signatures, beam = Counter(), []
             for node in expanded:
+                node=State(tuple(sorted(node.contacts,key=lambda c:(c['start'],c['pointer']))),node.score)
                 signature = tuple((c['hand'], c['finger']) for c in node.contacts[-3:])
                 if signatures[signature] >= 2:
                     continue
@@ -583,6 +588,15 @@ class Planner:
             if console and (index % 50 == 0 or index + 1 == len(self.tasks)):
                 console.print(f'algo5: {index + 1}/{len(self.tasks)} notes, {len(beam)} candidates')
         return list(min(beam, key=lambda n: n.score).contacts)
+
+    @staticmethod
+    def contact_occupancy_valid(contacts):
+        last={}
+        for c in sorted(contacts,key=lambda c:c['start']):
+            key=c['hand'],c['finger']
+            if last.get(key,-math.inf)>c['start']+1e-9:return False
+            last[key]=c['end']
+        return True
 
     def timing_metadata(self,task):
         original=self.original_tasks[task.id].note.seconds
@@ -834,8 +848,7 @@ class Planner:
                               judgement_times={**previous.get('judgement_times',{}),**c.get('judgement_times',{})},
                               effort=previous['effort'] + c['effort'])
                 others = tuple(other for other in contacts if other is not c and other is not previous
-                               and not set(other['note_ids']).intersection(merged['note_ids'])
-                               and ((other['hand'], other['finger']) != key or other['end'] < merged['start']))
+                               and not set(other['note_ids']).intersection(merged['note_ids']))
                 side = -1 if c['hand'] == 'left' else 1
                 errors, _, _ = self.constraints(merged, State(others), side, c['finger'])
                 if not errors:

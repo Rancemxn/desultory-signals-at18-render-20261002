@@ -114,9 +114,9 @@ def plan(key):
     planning_stage('initial-fingering',common(meta)+['--full','--plan-only','--output','output/base'])
     planning_stage('contact-paths',[sys.executable,'-u','general_refinement.py','output/base/motion-plan.json','inputs/selected.zip','output/rules/motion-plan.json'])
     planning_stage('shared-drags',[sys.executable,'-u','merge_shared_drags.py','output/rules/motion-plan.json','inputs/selected.zip','output/rules/merged.json'])
-    planning_stage('assignment',[sys.executable,'-u','refine_assignments.py','output/rules/merged.json','output/assigned','--beam',96])
+    planning_stage('assignment',[sys.executable,'-u','refine_assignments.py','output/rules/merged.json','output/assigned','--beam',96,'--chart','inputs/selected.zip'])
     planning_stage('contact-spacing',[sys.executable,'-u','spread_contacts.py','output/assigned/assigned-motion-plan.json','inputs/selected.zip','output/rules/spaced.json'])
-    planning_stage('final-assignment',[sys.executable,'-u','refine_assignments.py','output/rules/spaced.json','output/assigned-final','--beam',96])
+    planning_stage('final-assignment',[sys.executable,'-u','refine_assignments.py','output/rules/spaced.json','output/assigned-final','--beam',96,'--chart','inputs/selected.zip'])
     planning_stage('validation',[sys.executable,'-u','finalize_refinement.py','output/assigned-final/assigned-motion-plan.json','inputs/selected.zip','output/plan'])
 
 
@@ -135,6 +135,32 @@ def resume_plan(key):
     if set(plan['settings']['fingers']) != set(meta['allowed_fingers']):
         raise ValueError('Refinement artifact uses a different finger configuration')
     planning_stage('validation',[sys.executable,'-u','finalize_refinement.py',source,'inputs/selected.zip','output/plan'])
+
+
+def released_plan(key,release):
+    """Revalidate an uploaded plan against the original chart and current mode."""
+    meta=prepare(key)
+    asset=key+'-plan.zip'
+    run(['gh','release','download',release,'--pattern',asset,'--dir','inputs','--clobber'])
+    with zipfile.ZipFile(Path('inputs')/asset) as z:
+        source=json.loads(z.read('source.json'))
+        for field in ('key','level','source_sha256','fingering_objective','speed_limits','judgement_windows','allowed_fingers'):
+            if source[field]!=meta[field]:raise ValueError('Released plan differs from requested '+field)
+        content=z.read('motion-plan.json')
+        if hashlib.sha256(content).hexdigest()!=source['plan_sha256']:
+            raise ValueError('Released plan hash mismatch')
+        plan=json.loads(content)
+        for field in ('fingering_objective','speed_limits','judgement_windows'):
+            if plan['settings'].get(field,{'fingering_objective':'balanced','speed_limits':True,'judgement_windows':False}[field])!=meta[field]:
+                raise ValueError('Released plan settings mismatch: '+field)
+        if set(plan['settings']['fingers'])!=set(meta['allowed_fingers']):
+            raise ValueError('Released plan finger domain mismatch')
+        Path('output/assigned-final').mkdir(parents=True,exist_ok=True)
+        Path('output/assigned-final/assigned-motion-plan.json').write_bytes(content)
+        Path('output/rules').mkdir(parents=True,exist_ok=True)
+        Path('output/rules/general-rules.json').write_text(json.dumps(dict(source,release=release),indent=2))
+    planning_stage('validation',[sys.executable,'-u','finalize_refinement.py',
+        'output/assigned-final/assigned-motion-plan.json','inputs/selected.zip','output/plan'])
 
 
 def interval(meta, part):
@@ -262,6 +288,7 @@ if __name__=='__main__':
     stage = sys.argv[1]
     if stage=='plan': plan(sys.argv[2])
     elif stage=='resume-plan': resume_plan(sys.argv[2])
+    elif stage=='released-plan': released_plan(sys.argv[2],sys.argv[3])
     elif stage=='bake': bake(int(sys.argv[2]))
     elif stage=='render': render(int(sys.argv[2]))
     elif stage=='assemble': assemble()
