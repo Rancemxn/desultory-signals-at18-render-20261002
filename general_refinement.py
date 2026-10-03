@@ -148,7 +148,8 @@ def main():
         original = copy.deepcopy(c['points'])
         try:
             c['points'] = legal_path(g,c,screen)
-            pieces = relay(c,screen,2*len(plan['settings']['fingers']))
+            pieces = ([c] if plan['settings'].get('fingering_objective')=='load' else
+                      relay(c,screen,2*len(plan['settings']['fingers'])))
         except ValueError:
             if c['kind']!='hold':
                 raise

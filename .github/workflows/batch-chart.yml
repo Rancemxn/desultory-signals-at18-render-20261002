@@ -6,7 +6,7 @@ on:
       chart:
         required: true
         type: choice
-        options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate, OblivionPHIN, EntrancetotheChaos-IN-index2, ExoplanetaryMirage-IN-index2]
+        options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate, OblivionPHIN, EntrancetotheChaos-IN-index2, ExoplanetaryMirage-IN-index2, DesultorySignals-AT-load]
       plan_run:
         description: Optional prior run whose validated plan should be reused
         required: false
@@ -68,9 +68,13 @@ jobs:
         run: |
           python - <<'PY'
           import json, os
+          from batch_task import configuration
           from pathlib import Path
           meta=json.loads(Path('output/batch.json').read_text())
           assert meta['key']==os.environ['CHART']
+          config=configuration(os.environ['CHART'])
+          assert meta.get('fingering_objective','balanced')==config['fingering_objective']
+          assert meta.get('speed_limits',True)==config['speed_limits']
           report=json.loads(Path('output/plan/refinement-validation.json').read_text())
           assert not report['geometry_failures'] and not report['note_coverage_failures']
           assert not report['topology']['finger_overlaps'] and not report['topology']['same_hand_crossings']

@@ -41,3 +41,18 @@ This is a synthetic handcam animation with remaining pad-fit errors and hand
 intersections. A valid planned touch does not guarantee valid rendered skin
 contact. Native Phigros scoring is not validated.
 Source code retains its original WTFPL license. Media belongs to its respective authors.
+
+# Load-only variants
+
+`DesultorySignals-AT-load` reassigns the validated V21 contact paths with the
+fatigue, repeated-press and hand-load objective. It preserves the chart,
+contact paths and 1080p60 output, and uses eight parallel bake workers and
+eight render workers. `ExoplanetaryMirage-IN-index2` uses this objective
+throughout initial planning and final assignment, with only the two index fingers.
+
+For these variants, movement distance and pose preferences have zero scoring
+weight, and finger/contact/wrist speed and acceleration limits are disabled.
+Contact occupancy, note coverage, blocked areas and simultaneous finger order
+remain validated. Reports record `fingering_objective: load` and
+`speed_limits: false`; disabling speed checks does not establish physical
+playability or native game AP.

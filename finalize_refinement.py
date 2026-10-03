@@ -105,6 +105,8 @@ def main():
                 break
     topology = audit(contacts,plan['physical_screen'])
     report = dict(notes=len(notes),contacts=len(contacts),allowed_fingers=sorted(allowed),
+        fingering_objective=plan['settings'].get('fingering_objective','balanced'),
+        speed_limits=plan['settings'].get('speed_limits',True),
         used_fingers=sorted({(c['hand'],c['finger']) for c in contacts}),
         boundary_mode='aligned',tap_width_ratio=.5,hold_width_ratio=.5,drag_width_ratio=.3,
         judgement_time_adjustments=[dict(note=nid,seconds=t,offset_ms=(t-notes[int(nid)][1].seconds)*1000)

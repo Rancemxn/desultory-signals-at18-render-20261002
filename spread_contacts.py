@@ -82,6 +82,7 @@ def main():
                     following=min((o for o in same if o['start']>=c['end']),key=lambda o:o['start'],default=None)
                     too_fast=False
                     for one,two in ((previous,trial),(trial,following)):
+                        if not plan['settings'].get('speed_limits',True):break
                         if one is None or two is None:continue
                         gap=two['start']-one['end']
                         travel=math.hypot(*((two['points'][0][i+1]-one['points'][-1][i+1])*screen[i] for i in (0,1)))

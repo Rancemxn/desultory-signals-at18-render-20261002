@@ -6,7 +6,7 @@ Phigros input consumption/DPI-dependent Flick judgement is not simulated.
 from __future__ import annotations
 
 from collections import Counter, defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import copy
 import cmath
 import hashlib
@@ -40,8 +40,12 @@ class Settings:
     visual_radius: float = .012
     hold_margin: float = .004
     flick_distance: float = .16
+    fingering_objective: str = 'balanced'
+    speed_limits: bool = True
 
     def __post_init__(self):
+        if self.fingering_objective not in ('balanced', 'load'):
+            raise ValueError('Unknown fingering objective')
         if not (1 <= self.beam_width <= 32 and 1 <= self.candidates_per_finger <= 8 and 1 <= self.sample_ms <= 25):
             raise ValueError('Invalid algo5 search/sample budget')
         if any(not math.isfinite(x) or x <= 0 for x in (self.screen_width_m, self.finger_speed,
@@ -237,7 +241,7 @@ class Planner:
         return result
 
     def path(self, task, seed, end, direction=1):
-        key = (task.id, tuple(round(v, 5) for v in seed), end, direction)
+        key = (task.id, task.start, tuple(round(v, 5) for v in seed), end, direction)
         if key in self.paths:
             return self.paths[key]
         times = sorted({task.start, end, task.beat, *range(task.start, end, self.settings.sample_ms)})
@@ -288,7 +292,7 @@ class Planner:
         violations, movement, posture = [], 0., 0.
         xy = world_xy(record['points'][0][1:], self.physical)
         if previous:
-            if previous['end'] >= t:
+            if previous['end'] > t + 1e-9:
                 return ['occupied'], 0., 0.
             gap = t - previous['end']
             distance = math.dist(world_xy(previous['points'][-1][1:], self.physical), xy)
@@ -358,6 +362,9 @@ class Planner:
                     if math.dist(p, q) < .012:
                         # The baked transfer can pass above an occupied contact.
                         posture = max(posture, .5)
+        if not self.settings.speed_limits:
+            violations = [v for v in violations if v not in
+                          ('finger_transfer', 'wrist_transfer', 'contact_speed')]
         return sorted(set(violations)), movement, posture
 
     def corridor_path(self, task, end):
@@ -406,7 +413,7 @@ class Planner:
         for side, finger in self.keys:
             hand = 'left' if side == -1 else 'right'
             previous = next((c for c in reversed(state.contacts) if c['hand'] == hand and c['finger'] == finger), None)
-            if previous and previous['end'] >= t:
+            if previous and previous['end'] > t + 1e-9:
                 self.rejected['occupied'] += 1
                 continue
             fatigue, burst = load_at(state.contacts, t, hand, finger, self.settings)
@@ -415,7 +422,7 @@ class Planner:
             comfort = COMFORT[finger] * (1 - .3 * fatigue - .15 * hand_fatigue)
             limit = PEAK[finger] * (.65 + .35 * burst) * (1 - .2 * hand_fatigue)
             over = cps > limit and task.note.type in (NoteType.TAP, NoteType.HOLD)
-            if over and not degraded:
+            if over and not degraded and self.settings.fingering_objective != 'load':
                 self.rejected['burst_capacity'] += 1
                 continue
             burst_cost = .10 * max(0., cps / comfort - 1) if task.note.type == NoteType.TAP else 0.
@@ -471,7 +478,7 @@ class Planner:
                     violations, movement, posture = self.constraints(record, state, side, finger)
                     if over:
                         violations.append('burst_capacity')
-                    if violations and not degraded:
+                    if violations and not degraded and self.settings.fingering_objective != 'load':
                         self.rejected.update(violations)
                         continue
                     if 'occupied' in violations:
@@ -488,7 +495,8 @@ class Planner:
                                           world_xy(points[0][1:], self.physical)) < .055):
                         # Safe Drag continuation avoids an unnecessary handover/lift; final bridging is checked below.
                         same_style += .4
-                    record['effort'] += .02 * min(3., math.sqrt(movement))
+                    if self.settings.fingering_objective != 'load':
+                        record['effort'] += .02 * min(3., math.sqrt(movement))
                     own_f, own_b = load_at((record,), record['end'], hand, finger, self.settings)
                     after_f, after_b = min(1., base_after_f + own_f), max(0., base_after_b - (1 - own_b))
                     costs = dict(preference=PREFERENCE[finger], fatigue=.8 * fatigue + 1.5 * max(0., after_f - fatigue),
@@ -497,6 +505,9 @@ class Planner:
                                  movement=.35 * movement, posture=.8 * posture,
                                  visual=visual, side=side_cost, habit=-same_style,
                                  degraded=1000. * len(violations))
+                    if self.settings.fingering_objective == 'load':
+                        for name in ('preference','movement','posture','visual','side','habit','degraded'):
+                            costs[name] = 0.
                     record['decision'] = dict(costs=costs, fatigue_before=fatigue, fatigue_after=after_f,
                         burst_before=burst, burst_after=after_b, hand_fatigue=hand_fatigue,
                         finger_cps=cps, degraded=violations)
@@ -536,6 +547,8 @@ class Planner:
                     expanded.extend(self.share_flick_hold(task,state))
                     expanded.extend(self.share_drag(task,state))
                     expanded.extend(self.flick_on_hold(task,state))
+                    if not self.settings.speed_limits:
+                        expanded.extend(self.flick_after_hold(task,state))
             if not expanded:
                 raise PlanningError(f'No feasible handcam fingering for note {task.id} at {task.beat / 1000:.3f}s; '
                                     f'rejections: {dict(self.rejected)}')
@@ -553,6 +566,39 @@ class Planner:
             if console and (index % 50 == 0 or index + 1 == len(self.tasks)):
                 console.print(f'algo5: {index + 1}/{len(self.tasks)} notes, {len(beam)} candidates')
         return list(min(beam, key=lambda n: n.score).contacts)
+
+    def flick_after_hold(self, task, state):
+        """A completed Hold may release at its tail before a same-beat Flick.
+
+        Only discard the planner's extra UP millisecond after the actual Hold.
+        Start the Flick at its original judgement time, retaining a real swipe.
+        """
+        if task.note.type!=NoteType.FLICK or task.start>=task.beat:
+            return []
+        result=[]
+        notes={item.id:item.note for item in self.tasks}
+        for index,old in enumerate(state.contacts):
+            if old['kind']!='hold' or not task.start/1000<old['end']<=task.beat/1000+.0011:
+                continue
+            # Note IDs refer to the original line/note traversal, not sorted tasks.
+            if any(notes[n].type!=NoteType.HOLD for n in old['note_ids']):
+                continue
+            release=math.ceil(max(notes[n].seconds+notes[n].hold for n in old['note_ids'])*1000-1e-7)
+            if release>task.beat or release/1000<=old['start']:
+                continue
+            trimmed=copy.deepcopy(old)
+            trimmed['end']=release/1000
+            last=round(trimmed['end']-.001,3)
+            trimmed['points']=[p for p in old['points'] if p[0]<last]+[[last,*point_at(old['points'],last)]]
+            trimmed['hold_tail_dwell_trim_ms']=(old['end']-trimmed['end'])*1000
+            contacts=list(state.contacts);contacts[index]=trimmed
+            delayed=replace(task,start=task.beat)
+            for cost,c in self.choices(delayed,State(tuple(contacts),state.score),degraded=True):
+                if (c['hand'],c['finger'])!=(old['hand'],old['finger']):
+                    continue
+                c['flick_start_delayed_ms']=task.beat-task.start
+                result.append(State((*contacts,c),state.score+cost))
+        return result
 
     def share_flick_hold(self, task, state):
         """One same-beat Tap or Hold may share a Flick's pressed fingertip.

@@ -8,7 +8,7 @@ import time
 ROOT = Path(__file__).resolve().parent
 STATE = ROOT/'.local/batch-state.json'
 ORDER = ['AboutTheUniverse','TrueHomeTrueWorldRework','Implexrough','EntrancetotheChaos',
-         'ExoplanetaryMirage','Hate','OblivionPHIN',
+         'DesultorySignals-AT-load','ExoplanetaryMirage','Hate','OblivionPHIN',
          'EntrancetotheChaos-IN-index2','ExoplanetaryMirage-IN-index2']
 LANES = {'index2': ORDER[-2:], 'original': ORDER[:-2]}
 DEST = ROOT.parent/'delivery/general-charts'
@@ -74,6 +74,11 @@ def main():
             target.mkdir(parents=True,exist_ok=True)
             gh('release','download',f"general-{key}-{entry['run']}",'--dir',target,'--clobber')
             report = json.loads((target/'validation.json').read_text(encoding='utf-8'))
+            if key in ('DesultorySignals-AT-load','ExoplanetaryMirage-IN-index2'):
+                assert report['chart']['fingering_objective']=='load'
+                assert report['chart']['speed_limits'] is False
+                assert report['contact_validation']['fingering_objective']=='load'
+                assert report['contact_validation']['speed_limits'] is False
             if key.endswith('-IN-index2'):
                 assert report['chart']['level']=='IN'
                 assert report['chart']['allowed_fingers']==['index']

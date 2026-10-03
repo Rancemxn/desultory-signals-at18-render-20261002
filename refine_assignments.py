@@ -21,7 +21,7 @@ def assignment_keys(plan):
     return keys
 
 
-def pair_cost(a,b,screen,offsets,comfort=None,keys=KEYS):
+def pair_cost(a,b,screen,offsets,comfort=None,keys=KEYS,load_only=False):
     comfort = comfort or {}
     samehand = np.array([[x[0]==y[0] for y in keys] for x in keys])
     samefinger = np.eye(len(keys),dtype=bool)
@@ -41,6 +41,10 @@ def pair_cost(a,b,screen,offsets,comfort=None,keys=KEYS):
             span = np.maximum(span,np.linalg.norm(anchors,axis=2))
             reverse = np.maximum(reverse,-(left[0]-right[0])*np.sign(natural_x))
         ordered = np.array([[x[1]!='thumb' and y[1]!='thumb' and x!=y for y in keys] for x in keys])
+        if load_only:
+            cost[samehand & ordered & (reverse>.002)] = 1e8
+            cost[samefinger] = 1e12
+            return cost
         cost += samehand*(180*(span/.05)**2 + 2e6*np.maximum(0,span-.04)**2)
         cost += samehand*ordered*(reverse>.002)*1e8
         if comfort:
@@ -62,6 +66,8 @@ def pair_cost(a,b,screen,offsets,comfort=None,keys=KEYS):
                         cost[ka,kb] += 2e5*max(0,comfort.get('hand_spacing_m',.065)-separation)**2
         cost[samefinger] = 1e12
     else:
+        if load_only:
+            return cost
         pa = np.array(world_xy(a['points'][-1][1:],screen))
         pb = np.array(world_xy(b['points'][0][1:],screen))
         distance = float(np.linalg.norm(pa-pb))
@@ -80,22 +86,25 @@ def graph(contacts,plan):
     unary = np.zeros((len(contacts),len(keys)))
     neighbors = [[] for _ in contacts]
     comfort = plan.get('comfort',{})
+    load_only = plan.get('settings',{}).get('fingering_objective') == 'load'
     priorities = comfort.get('finger_costs',{'index':0.,'middle':.1,'ring':1.,'little':12.,'thumb':35.})
     for i,c in enumerate(contacts):
         x = sum(p[1] for p in c['points'])/len(c['points'])
         for k,(hand,finger) in enumerate(keys):
             side = -1 if hand=='left' else 1
-            unary[i,k] = 3000*max(0,-side*(x-.5)-.06)**2 + priorities[finger]
-            if c.get('manual_hand') and hand!=c['manual_hand']:
+            unary[i,k] = 0. if load_only else 3000*max(0,-side*(x-.5)-.06)**2 + priorities[finger]
+            if not load_only and c.get('manual_hand') and hand!=c['manual_hand']:
                 unary[i,k] += 1e9
-            if c.get('fixed_finger') and (hand,finger)!=tuple(c['fixed_finger']):
+            if not load_only and c.get('fixed_finger') and (hand,finger)!=tuple(c['fixed_finger']):
                 unary[i,k] += 1e12
     for i,a in enumerate(contacts):
         for j in range(i+1,len(contacts)):
             b = contacts[j]
             if b['start']>a['end']+.45:
                 break
-            matrix = pair_cost(a,b,plan['physical_screen'],offsets,comfort,keys)
+            if load_only and b['start']>=a['end']:
+                break
+            matrix = pair_cost(a,b,plan['physical_screen'],offsets,comfort,keys,load_only)
             neighbors[i].append((j,matrix))
             neighbors[j].append((i,matrix.T))
     return unary,neighbors
@@ -226,17 +235,29 @@ def main():
     baseline = audit(contacts,plan['physical_screen'])
     unary,neighbors = graph(contacts,plan)
     initial = np.array([keys.index((c['hand'],c['finger'])) for c in contacts])
-    before = objective(initial,unary,neighbors)
-    beam = beam_assign(unary,neighbors,args.beam)
-    a = descend(initial,unary,neighbors)
-    b = descend(beam,unary,neighbors)
-    labels = min((a,b),key=lambda x:objective(x,unary,neighbors))
+    load_only = plan['settings'].get('fingering_objective') == 'load'
+    if load_only:
+        from load_assignment import assign_load, score_labels
+        before = score_labels(contacts,keys,plan['settings'],initial)[0]
+        labels = assign_load(contacts,keys,plan['settings'],neighbors,args.beam)
+        after,decisions = score_labels(contacts,keys,plan['settings'],labels)
+        for c,decision in zip(contacts,decisions):
+            c.update(effort=decision.pop('effort'),burst_cost=decision.pop('burst_cost'),decision=decision)
+    else:
+        before = objective(initial,unary,neighbors)
+        beam = beam_assign(unary,neighbors,args.beam)
+        a = descend(initial,unary,neighbors)
+        b = descend(beam,unary,neighbors)
+        labels = min((a,b),key=lambda x:objective(x,unary,neighbors))
+        after = objective(labels,unary,neighbors)
     for c,label in zip(contacts,labels):
         c['hand'],c['finger'] = keys[label]
         c['pointer'] = (0 if c['hand']=='left' else 5)+FINGER_ORDER.index(c['finger'])
     plan['hand_rest'] = finish_motion(contacts,plan['profile'],plan['physical_screen'],.28/.82)
     result = audit(contacts,plan['physical_screen'])
-    report = dict(before=baseline,after=result,cost_before=before,cost_after=objective(labels,unary,neighbors),beam_width=args.beam)
+    report = dict(before=baseline,after=result,cost_before=before,cost_after=after,beam_width=args.beam,
+                  fingering_objective=plan['settings'].get('fingering_objective','balanced'),
+                  speed_limits=plan['settings'].get('speed_limits',True))
     args.output.mkdir(parents=True,exist_ok=True)
     (args.output/'assigned-motion-plan.json').write_text(json.dumps(plan,indent=2))
     (args.output/'assignment-refinement.json').write_text(json.dumps(report,indent=2))
