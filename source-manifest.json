@@ -84,7 +84,7 @@
     "test_handcam_sampling.py": "415b28fa6da06a5ca32e1bb34d7cbb5ecf407ef80595210662d9e802f508e15e",
     "audit_saved_blocks.py": "1aed8d81eff959ffc77934bb1f175ec35044d10640acb76ecdaa8f48d4a89a96",
     ".github/workflows/refined-contact-audit.yml": "6c661e189d475e46d37331f650af2d0b3fc2abebbb6e31aef5cf95bc47e98218",
-    "audit_display_contacts.py": "173505eae0d94567c7b5750c3e83281952bbf3f8e564f62d3e7ea73b6684ce1f",
+    "audit_display_contacts.py": "9c84d06d0832548913b0fd30a1b6eaa56df7bbe82982bf6568aeb1d1701aa7a3",
     "capture_bake_boundaries.py": "b1ae85584c2c8211ff23a164675b54b33e5e2c0ce5eef4714cbe22d6a8f80ed8",
     "comfort_audit.py": "042a95383eac9feaba62fed558de6cb07527a3911669e0a6ec8ffd3099dce0f1",
     "comfort_refine.py": "0cf20ed5c5cc4fa9f135bff48efa03d4487f3e3b8d1b13ca6eb8dc8bb03360c6",
