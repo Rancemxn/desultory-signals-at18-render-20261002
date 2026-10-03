@@ -185,7 +185,9 @@ def assign_contacts(job, offsets):
             key = (-1 if contact['hand'] == 'left' else 1, contact['finger'])
             if key not in tracks:
                 raise ValueError(f'Uncalibrated finger in motion plan: {key}')
-            if tracks[key] and tracks[key][-1]['end'] >= contact['start']:
+            # PSAP lifetimes are [DOWN, UP): an UP followed by a DOWN at the
+            # same timestamp releases the finger before its next contact.
+            if tracks[key] and tracks[key][-1]['end'] > contact['start']:
                 raise ValueError(f'Overlapping planned contacts: {key}')
             tracks[key].append(contact)
         return tracks
