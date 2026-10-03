@@ -263,6 +263,8 @@ def main(argv=None):
     parser.add_argument('--keyframes', action='store_true', help='render five inspection frames instead of the video')
     parser.add_argument('--bake-only', action='store_true', help='solve and save the full hand animation without rendering media')
     parser.add_argument('--warmup', type=float, default=1., help='seconds of motion history before a bake segment')
+    parser.add_argument('--consistent-history', action='store_true',
+                        help='replay from the shared -1 second origin and retain full contact context for parallel bakes')
     parser.add_argument('--screen-video', action='store_true', help='stream chart frames into video instead of saving every PNG')
     parser.add_argument('--stream', action='store_true', help='render a baked animation in small video chunks, saving disk space')
     parser.add_argument('--resume', action='store_true', help='resume video rendering from the saved job in --output; uses saved settings')
@@ -388,7 +390,10 @@ def main(argv=None):
         if not motion_plan and not any(c['end'] >= args.start and c['start'] < args.start + duration for c in contacts):
             raise ValueError('No contacts overlap the requested clip')
         # Algo5 has already planned the whole song; keep its rest schedule but only solve nearby fingers.
-        contacts = [c for c in contacts if c['end'] >= args.start - args.warmup and c['start'] <= args.start + duration + 1]
+        if args.consistent_history:
+            args.warmup = args.start + 1.
+        else:
+            contacts = [c for c in contacts if c['end'] >= args.start - args.warmup and c['start'] <= args.start + duration + 1]
         screen_w = .28
         screen_h = screen_w * chart.height / chart.width
         resources = prepare_resources(args.resources.resolve(), out / 'resources') if not args.video else args.resources.resolve()

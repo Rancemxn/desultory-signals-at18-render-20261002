@@ -7,6 +7,10 @@ on:
         required: true
         type: choice
         options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate]
+      plan_run:
+        description: Optional prior run whose validated plan should be reused
+        required: false
+        type: string
 permissions:
   contents: write
 concurrency:
@@ -22,7 +26,35 @@ jobs:
       - env:
           CHART: ${{ inputs.chart }}
           GH_TOKEN: ${{ github.token }}
+        if: ${{ inputs.plan_run == '' }}
         run: python -u batch_task.py plan "$CHART"
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.plan_run != '' }}
+        with:
+          name: planning
+          path: output
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.plan_run }}
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.plan_run != '' }}
+        with:
+          name: selected-chart
+          path: inputs
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.plan_run }}
+      - if: ${{ inputs.plan_run != '' }}
+        env:
+          CHART: ${{ inputs.chart }}
+        run: |
+          python - <<'PY'
+          import json, os
+          from pathlib import Path
+          meta=json.loads(Path('output/batch.json').read_text())
+          assert meta['key']==os.environ['CHART']
+          report=json.loads(Path('output/plan/refinement-validation.json').read_text())
+          assert not report['geometry_failures'] and not report['note_coverage_failures']
+          assert not report['topology']['finger_overlaps'] and not report['topology']['same_hand_crossings']
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

@@ -130,8 +130,13 @@ def release_idle_contacts(contacts, hold_intervals=()):
 def sample_times(job):
     start, end = job['start'], job['start'] + job['duration']
     warmup_frames=round(job.get('warmup',1.)*job['fps'])
-    begin=start-warmup_frames/job['fps']
-    times = {start + i / job['fps'] for i in range(-warmup_frames, job['frames'])}
+    # Absolute frame arithmetic gives each parallel worker identical floating
+    # point timestamps, including workers starting at fractional seconds.
+    first_frame = round(start*job['fps'])
+    grid_aligned = abs(first_frame/job['fps']-start)<1e-9
+    begin = (first_frame-warmup_frames)/job['fps'] if grid_aligned else start-warmup_frames/job['fps']
+    times = {(first_frame+i)/job['fps'] if grid_aligned else start+i/job['fps']
+             for i in range(-warmup_frames,job['frames'])}
     phases = (.14, .25, .28, .5, .68, .75, .84) if job.get('palm_lift_mode') in ('accent', 'gentle') else (.14, .28, .5, .68, .84)
     contract_times = set()
     for contact in job['contacts']:

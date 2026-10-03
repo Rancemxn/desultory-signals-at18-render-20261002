@@ -79,7 +79,7 @@ def bake(part):
     duration = frames/60
     full = Path(f'output/part{part}')
     run(common(meta)+['--psap','output/plan/plan.psap','--motion-plan','output/plan/motion-plan.json',
-        '--start',start,'--duration',(frames+(part<7))/60-1e-9,'--warmup',8,
+        '--start',start,'--duration',(frames+(part<7))/60-1e-9,'--consistent-history',
         '--bake-only','--output',full])
     run([BLENDER,'--background','--disable-autoexec',full/'handcam.blend','--python-exit-code',1,
          '--python','capture_bake_boundaries.py','--',full/'job.json',duration])
@@ -108,7 +108,8 @@ def bake(part):
     provenance = dict(commit=os.environ.get('GITHUB_SHA'),workflow_run=os.environ.get('GITHUB_RUN_ID'),
         blend_sha256=digest,plan_sha256=hashlib.sha256(Path('output/plan/motion-plan.json').read_bytes()).hexdigest(),
         psap_sha256=hashlib.sha256(Path('output/plan/plan.psap').read_bytes()).hexdigest(),**meta)
-    provenance.update(part=part,start=start,duration=duration,frames=frames,warmup_seconds=8.,
+    provenance.update(part=part,start=start,duration=duration,frames=frames,warmup_seconds=start+1.,
+                      initialization_time=-1.,full_contact_context=True,
                       parallel_bake=True,retained_join_frame=part<7)
     (full/'provenance.json').write_text(json.dumps(provenance,indent=2))
 
