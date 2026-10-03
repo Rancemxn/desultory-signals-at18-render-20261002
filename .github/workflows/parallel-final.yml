@@ -1,0 +1,104 @@
+name: V21 reviewed parallel 1080p60 export
+on:
+  workflow_dispatch:
+    inputs:
+      bake_run:
+        description: Successful eight-part bake run with passed seam audit
+        required: true
+        type: string
+permissions:
+  contents: write
+  actions: read
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    outputs:
+      source: ${{ steps.source.outputs.sha }}
+    steps:
+      - id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          BAKE_RUN: ${{ inputs.bake_run }}
+        run: |
+          gh api "repos/$GH_REPO/actions/runs/$BAKE_RUN" > run.json
+          python - <<'PY'
+          import json, os
+          run = json.load(open('run.json'))
+          assert run['conclusion'] == 'success'
+          assert run['path'] == '.github/workflows/parallel-bake.yml'
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              out.write('sha=' + run['head_sha'] + '\n')
+          PY
+      - uses: actions/download-artifact@v4
+        with:
+          name: parallel-full-review
+          path: review
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - run: python -c "import json; assert json.load(open('review/seam-validation.json'))['passed']"
+  render:
+    needs: verify
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.source }}
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: parallel-bake-${{ matrix.part }}
+          path: output/part${{ matrix.part }}
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - run: python -u parallel_task.py render ${{ matrix.part }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-final-part-${{ matrix.part }}
+          path: |
+            delivery/part${{ matrix.part }}.mp4
+            delivery/part${{ matrix.part }}-*.json
+            output/part${{ matrix.part }}/*.log
+          retention-days: 7
+  assemble:
+    needs: [verify, render]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.verify.outputs.source }}
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: parallel-final-part-*
+          path: assembled
+          merge-multiple: true
+      - uses: actions/download-artifact@v4
+        with:
+          name: parallel-full-review
+          path: output/full
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - run: |
+          mkdir -p output/plan
+          gh release download refined-plan-v21 --pattern 'refinement-validation.json' --pattern 'native-display-audit.json' --dir output/plan
+          python -u parallel_task.py assemble
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: |
+          gh release create refined-v21-1080p60 delivery/Desultory-Signals-AT18-1080p60-refined.mp4 delivery/validation.json delivery/pose-diagnostics.json delivery/pose-numeric.json delivery/native-display-audit.json delivery/DELIVERY.md --title 'Desultory Signals AT18 V21 — 1080p60' --notes-file delivery/DELIVERY.md
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parallel-final-delivery
+          path: delivery
+          retention-days: 7
