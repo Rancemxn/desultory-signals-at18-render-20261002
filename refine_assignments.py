@@ -13,7 +13,8 @@ from handcam_motion import FINGER_ORDER, finish_motion, palm_offsets, point_at, 
 KEYS = [(hand,finger) for hand in ('left','right') for finger in ('index','middle','ring','little','thumb')]
 
 
-def pair_cost(a,b,screen,offsets):
+def pair_cost(a,b,screen,offsets,comfort=None):
+    comfort = comfort or {}
     samehand = np.array([[x[0]==y[0] for y in KEYS] for x in KEYS])
     samefinger = np.eye(len(KEYS),dtype=bool)
     gap = b['start']-a['end']
@@ -34,12 +35,23 @@ def pair_cost(a,b,screen,offsets):
         ordered = np.array([[x[1]!='thumb' and y[1]!='thumb' and x!=y for y in KEYS] for x in KEYS])
         cost += samehand*(180*(span/.05)**2 + 2e6*np.maximum(0,span-.04)**2)
         cost += samehand*ordered*(reverse>.002)*1e8
+        if comfort:
+            # Compatible wrist anchors keep adjacent fingers relaxed instead of
+            # forcing a splayed grip merely to preserve a finger preference.
+            cost += samehand*350*(span/.04)**2
+            min_distance = float(np.min(np.linalg.norm(pa-pb,axis=1)))
+            cost += samehand*3e6*max(0,comfort.get('finger_spacing_m',.018)-min_distance)**2
         # Crossing complete hands is also expensive; a central relay remains allowed.
         for ka,(ha,_) in enumerate(KEYS):
             for kb,(hb,_) in enumerate(KEYS):
                 if ha!=hb:
                     crossed = np.max((pa[:,0]-pb[:,0])*(1 if ha=='left' else -1))
                     cost[ka,kb] += 2e6*max(0,crossed-.025)**2
+                    if comfort:
+                        anchors_a = pa-offsets[ka]
+                        anchors_b = pb-offsets[kb]
+                        separation = np.min((anchors_b[:,0]-anchors_a[:,0])*(1 if ha=='left' else -1))
+                        cost[ka,kb] += 2e5*max(0,comfort.get('hand_spacing_m',.065)-separation)**2
         cost[samefinger] = 1e12
     else:
         pa = np.array(world_xy(a['points'][-1][1:],screen))
@@ -58,11 +70,13 @@ def graph(contacts,plan):
     offsets = np.array([measured[-1 if h=='left' else 1,f][:2] for h,f in KEYS])
     unary = np.zeros((len(contacts),len(KEYS)))
     neighbors = [[] for _ in contacts]
+    comfort = plan.get('comfort',{})
+    priorities = comfort.get('finger_costs',{'index':0.,'middle':.1,'ring':1.,'little':12.,'thumb':35.})
     for i,c in enumerate(contacts):
         x = sum(p[1] for p in c['points'])/len(c['points'])
         for k,(hand,finger) in enumerate(KEYS):
             side = -1 if hand=='left' else 1
-            unary[i,k] = 3000*max(0,-side*(x-.5)-.06)**2 + {'index':0.,'middle':.1,'ring':1.,'little':12.,'thumb':35.}[finger]
+            unary[i,k] = 3000*max(0,-side*(x-.5)-.06)**2 + priorities[finger]
             if c.get('manual_hand') and hand!=c['manual_hand']:
                 unary[i,k] += 1e9
             if c.get('fixed_finger') and (hand,finger)!=tuple(c['fixed_finger']):
@@ -72,7 +86,7 @@ def graph(contacts,plan):
             b = contacts[j]
             if b['start']>a['end']+.45:
                 break
-            matrix = pair_cost(a,b,plan['physical_screen'],offsets)
+            matrix = pair_cost(a,b,plan['physical_screen'],offsets,comfort)
             neighbors[i].append((j,matrix))
             neighbors[j].append((i,matrix.T))
     return unary,neighbors

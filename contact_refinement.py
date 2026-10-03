@@ -21,7 +21,8 @@ from handcam_motion import point_at
 
 
 class ContactGeometry:
-    def __init__(self, chart, mask_size=(196, 110), pad_clearance=.006, boundary_mode='aligned'):
+    def __init__(self, chart, mask_size=(196, 110), pad_clearance=.006, boundary_mode='aligned',
+                 physical_screen=(.28, .1575), extra_clearance_m=0.):
         self.chart = chart
         self.notes = dict(enumerate((line, n) for line in chart.lines for n in line.notes))
         self.screen = box(.012, .012, .988, .988).difference(
@@ -32,17 +33,34 @@ class ContactGeometry:
         if boundary_mode not in ('aligned', 'native'):
             raise ValueError(f'Unknown block boundary mode: {boundary_mode}')
         self.display_margin = (math.sqrt(.5) * .1 if boundary_mode == 'native' else 0.) + 1.5 / min(mask_size) + pad_clearance
+        self.physical_screen = tuple(physical_screen)
+        self.extra_clearance_m = float(extra_clearance_m)
+        if not math.isfinite(self.extra_clearance_m) or self.extra_clearance_m < 0:
+            raise ValueError('Block clearance must be finite and nonnegative')
+        if len(self.physical_screen)!=2 or any(not math.isfinite(v) or v<=0 for v in self.physical_screen):
+            raise ValueError('Physical screen dimensions must be finite and positive')
 
     def normalized(self, geometry):
         return scale(geometry, xfact=1/self.chart.width, yfact=1/self.chart.height, origin=(0, 0))
 
     @lru_cache(maxsize=32768)
-    def blocked(self, t):
+    def blocked(self, t, extra_clearance_m=None):
         raw = self.normalized(compose(self.chart.block_areas.active(t)))
         # Shapely approximates circular buffers with an inscribed polygon. Inflate
         # by the secant of half an arc step to keep the bound conservative.
         radius = self.display_margin / math.cos(math.pi / 64)
-        return raw.buffer(radius, quad_segs=16) if not raw.is_empty else raw
+        if raw.is_empty:
+            return raw
+        guarded = raw.buffer(radius, quad_segs=16)
+        extra_clearance_m = self.extra_clearance_m if extra_clearance_m is None else float(extra_clearance_m)
+        if not math.isfinite(extra_clearance_m) or extra_clearance_m < 0:
+            raise ValueError('Block clearance must be finite and nonnegative')
+        if extra_clearance_m:
+            w,h = self.physical_screen
+            physical = scale(guarded, xfact=w, yfact=h, origin=(0,0))
+            guarded = scale(physical.buffer(extra_clearance_m / math.cos(math.pi/64), quad_segs=16),
+                            xfact=1/w, yfact=1/h, origin=(0,0))
+        return guarded
 
     def strip(self, line, note, t, ratio):
         when = max(note.seconds, min(t, note.seconds+note.hold-.001)) if note.type == NoteType.HOLD else note.seconds
@@ -51,11 +69,16 @@ class ContactGeometry:
             cmath.exp(1j*(line.angle@when)), self.chart.width, self.chart.height, half, ratio).poly)
 
     def zone(self, contact, t, *, central=True):
+        joint=contact.get('joint_note_coverage') or any(
+            w['start']<=t<w['end'] for w in contact.get('joint_note_windows',()))
         owner = [self.notes[nid] for nid in contact['note_ids']]
         holds = [(line,n) for line,n in owner if n.type == NoteType.HOLD and
                  n.seconds-.0011 <= t <= n.seconds+n.hold+.0011]
         required = holds or [(line,n) for line,n in owner if abs(t-n.seconds) <= .0011 or
                             n.seconds <= t <= n.seconds+.010]
+        if joint:
+            required = holds + [(line,n) for line,n in owner if n.type!=NoteType.HOLD and
+                (abs(t-n.seconds)<=.0011 or n.seconds<=t<=n.seconds+.010)]
         # A connected Drag phrase is free to travel BETWEEN judgement windows.
         # Switching the nearest note's strip at its temporal midpoint creates
         # spurious discontinuities, even while the actual note geometry is static.
@@ -65,11 +88,15 @@ class ContactGeometry:
         if contact.get('refinement_region'):
             zone = zone.intersection(box(*contact['refinement_region']))
         if required:
-            strips = [self.strip(line, n, t, (.5 if n.type == NoteType.HOLD else
+            strips = [self.strip(line, n, t, (.5 if n.type in (NoteType.HOLD, NoteType.TAP) else
                       .3 if n.type == NoteType.DRAG else .85) if central else .85)
                       for line,n in required]
-            zone = zone.intersection(unary_union(strips))
-        return zone.difference(self.blocked(t))
+            if joint:
+                for strip in strips:
+                    zone = zone.intersection(strip)
+            else:
+                zone = zone.intersection(unary_union(strips))
+        return zone.difference(self.blocked(t, contact.get('block_clearance_m')))
 
     def times(self, contact, step=.01):
         low, high = round(contact['start']*1000), round(contact['end']*1000)-1

@@ -1,0 +1,49 @@
+name: V21 eight-part bake and numerical review
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  bake:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - run: |
+          mkdir -p output/plan
+          gh release download refined-plan-v21 --pattern 'plan.psap' --pattern 'motion-plan.json' --dir output/plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: python -u parallel_task.py bake ${{ matrix.part }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-bake-${{ matrix.part }}
+          path: |
+            output/part${{ matrix.part }}/*.json
+            output/part${{ matrix.part }}/*.log
+            output/part${{ matrix.part }}/handcam.blend
+          retention-days: 7
+  audit:
+    needs: bake
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: parallel-bake-*
+          path: baked
+      - run: python -u parallel_task.py audit baked
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-full-review
+          path: output/full/*.json
+          retention-days: 7

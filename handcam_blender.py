@@ -129,22 +129,24 @@ def release_idle_contacts(contacts, hold_intervals=()):
 
 def sample_times(job):
     start, end = job['start'], job['start'] + job['duration']
-    times = {start + i / job['fps'] for i in range(-job['fps'], job['frames'])}
+    warmup_frames=round(job.get('warmup',1.)*job['fps'])
+    begin=start-warmup_frames/job['fps']
+    times = {start + i / job['fps'] for i in range(-warmup_frames, job['frames'])}
     phases = (.14, .25, .28, .5, .68, .75, .84) if job.get('palm_lift_mode') in ('accent', 'gentle') else (.14, .28, .5, .68, .84)
     contract_times = set()
     for contact in job['contacts']:
         event_times = {t for t in (contact['start'], contact['end'], *(p[0] for p in contact['points']))
-                       if start - 1 <= t <= end}
+                       if begin <= t <= end}
         contract_times.update(event_times)
         times.update(event_times)
         if contact.get('planned'):
-            times.update(t for t in (contact['prepare'], contact['release_until']) if start - 1 <= t <= end)
+            times.update(t for t in (contact['prepare'], contact['release_until']) if begin <= t <= end)
     for gap in job.get('hand_rest', []):
-        times.update(p[0] for p in gap['knots'] if start - 1 <= p[0] <= end)
+        times.update(p[0] for p in gap['knots'] if begin <= p[0] <= end)
         if (job.get('palm_lift_ratio') is not None and gap['mode'] == 'hover'
                 and 0 < gap['end'] - gap['start'] <= job.get('stroke_gap_limit', .75)):
             times.update(t for u in phases
-                         if start - 1 <= (t := gap['start'] + u * (gap['end'] - gap['start'])) <= end)
+                         if begin <= (t := gap['start'] + u * (gap['end'] - gap['start'])) <= end)
     if job.get('finger_motion') == 'whole_finger':
         tracks = {}
         for c in job['contacts']:
@@ -155,7 +157,7 @@ def sample_times(job):
                 gap = following['start'] - previous['end']
                 if 0 < gap <= job.get('stroke_gap_limit', .75):
                     times.update(t for u in phases
-                                 if start - 1 <= (t := previous['end'] + u * gap) <= end)
+                                 if begin <= (t := previous['end'] + u * gap) <= end)
     ordered = sorted(times)
     times.update((a + b) / 2 for a, b in zip(ordered, ordered[1:]) if b - a > 1 / 120)
     # Equivalent event/phase expressions can differ by a few floating-point
@@ -624,7 +626,8 @@ def main(job):
                     bone.lock_ik_z = True
                 else:
                     bone.use_ik_limit_z = True
-                    spread = .65 if finger=='thumb' else {'index':.35,'middle':.22,'ring':.28,'little':.35}[finger]
+                    spread = .65 if finger=='thumb' else job.get('finger_lateral_limit',
+                        {'index':.35,'middle':.22,'ring':.28,'little':.35}[finger])
                     bone.ik_min_z, bone.ik_max_z = -spread, spread
         bpy.context.view_layer.update()
         for finger, chain in FINGERS.items():
@@ -767,6 +770,8 @@ def main(job):
     from handcam_avoidance import PoseAvoidance
     avoidance = PoseAvoidance(rigs, targets, FINGERS,
         motion_limits=job.get('avoidance_motion_limits',dict(wrist_speed=.18,max_wrist_shift=.025))) if job.get('pose_avoidance', True) else None
+    if avoidance:
+        avoidance.finger_lateral_limit=job.get('finger_lateral_limit')
     airborne_floor_corrections = 0
 
     def clear_airborne_skin(samples,pads,t):
@@ -787,7 +792,14 @@ def main(job):
                 landing = smooth((following['start']-t)/.08) if following else 1.
                 floor = job['contact_height']+.0075*release*landing
                 if pad.z < floor-.0001:
-                    avoidance.move_finger(key,Vector((0.,0.,min(.012,floor-pad.z))),samples)
+                    if key[1]!='thumb' and job.get('finger_lateral_limit') is not None:
+                        # Keep the airborne finger in its own bending plane.
+                        # Switching idle fingers back to target IK here caused
+                        # the sideways excursions this clearance pass should avoid.
+                        lift=min(.06,max(.005,(floor-pad.z)/max(.04,lengths[key])))
+                        avoidance.curl_finger(key,Vector((lift,-lift*.3,-lift*.2)))
+                    else:
+                        avoidance.move_finger(key,Vector((0.,0.,min(.012,floor-pad.z))),samples)
                     airborne_floor_corrections += 1
                     changed = True
             if not changed:
@@ -869,7 +881,7 @@ def main(job):
     max_error, contact_samples = 0., 0
     min_clearance, mesh_samples = math.inf, 0
     # Warm up before the clip so a contact already on screen starts in the correct pose.
-    previous_time = job['start'] - 1 - 1 / job['fps']
+    previous_time = job['start'] - round(job.get('warmup',1.)*job['fps'])/job['fps'] - 1 / job['fps']
     motion_stats = dict(wrist_speed_clamps=0,max_wrist_lateral_speed_mps=0.)
     last_progress = 0
     for t in sample_times(motion_job):
@@ -1007,6 +1019,16 @@ def main(job):
                 i = bisect.bisect_right(events, t, key=lambda c: c['start']) - 1
                 previous = events[i] if i >= 0 else None
                 following = events[i + 1] if i + 1 < len(events) else None
+                strict_idle=job.get('finger_lateral_limit') is not None and not samples[key][2]
+                release_ik=0.
+                landing_ik=0.
+                if strict_idle:
+                    gap=(following['start']-previous['end']) if previous and following else math.inf
+                    transition=min(.10,max(.02,gap*.40))
+                    release_ik=smooth(1-(t-previous['end'])/transition) if previous else 0.
+                    landing_ik=smooth(1-(following['start']-t)/transition) if following else 0.
+                    pose=[a.to_quaternion().slerp(b.to_quaternion(),1-release_ik).to_euler('XYZ')
+                          for a,b in zip(pose,relaxed_rotations[key])]
                 if samples[key][2] and key not in previous_down:
                     # Start contact IK from the prepared pose, not a pose cached
                     # at the end of an unrelated earlier contact.
@@ -1032,6 +1054,12 @@ def main(job):
                         height = max(0., height - (roots[key[0]].z - contact_root_heights.get(key, roots[key[0]].z)))
                         angle = math.asin(min(.8, height / max(.03, lengths[key] * .8)))
                         bones[0].rotation_euler.x = min(.4, pose[0].x + angle)
+                        if job.get('finger_lateral_limit') is not None:
+                            # Release the old sideways grip during the lifted
+                            # phase. Reusing it until the next DOWN made an idle
+                            # finger sweep across its neighbour and back.
+                            settle=smooth((t-previous['end'])/.08)
+                            bones[0].rotation_euler.z=pose[0].z*(1-settle)+relaxed_rotations[key][0].z*settle
                         # In the raised phase, rotate the finger as a curved unit
                         # about the MCP joint. Blend back into contact IK before
                         # landing; do not let a fixed-XY tip target re-curl it.
@@ -1046,6 +1074,12 @@ def main(job):
                         # the finger sharply for one or two output frames.
                         duration = min(.18, following['start'] - following['prepare']) if following else 0.
                         influence = smooth((t - following['start'] + duration) / max(1e-6, duration)) if following else 0.
+                if strict_idle:
+                    influence=max(release_ik,landing_ik)
+            if key[1]!='thumb' and job.get('finger_lateral_limit') is not None:
+                bone=rigs[key[0]].pose.bones[FINGERS[key[1]][0]]
+                limit=job['finger_lateral_limit']
+                bone.rotation_euler.z=max(-limit,min(limit,bone.rotation_euler.z))
             rigs[key[0]].pose.bones[FINGERS[key[1]][-1]].constraints[0].influence = influence
             target.location = Vector(samples[key][0]) - pad_offsets[key]
         refinement_steps = solve_steps()
@@ -1108,6 +1142,12 @@ def main(job):
                 targets[key].location += delta
             collision_corrections += 1
             pads = fit_skin(samples)
+        if avoidance and job.get('finger_lateral_limit') is not None:
+            for _ in range(2):
+                if not avoidance.separate_airborne_order(samples):
+                    break
+                pads = skin_pads(meshes, pad_indices)
+                pads = clear_airborne_skin(samples, pads, t)
         if job.get('finger_motion') == 'whole_finger':
             for key, (_, _, down) in samples.items():
                 if not down or key[1] == 'thumb':

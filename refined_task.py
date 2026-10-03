@@ -18,7 +18,7 @@ def run(args):
     subprocess.run([str(a) for a in args],check=True)
 
 
-def bake(out,start,duration):
+def bake(out,start,duration,*,warmup=1.):
     out = Path(out)
     out.mkdir(parents=True,exist_ok=True)
     started = time.monotonic()
@@ -26,7 +26,7 @@ def bake(out,start,duration):
          '--model','inputs/hands.blend','--resources','inputs/resources.zip','--blender',BLENDER,
          '--psap','output/plan/plan.psap','--motion-plan','output/plan/motion-plan.json',
          '--title','Desultory Signals','--level','AT 18','--width',1920,'--height',1080,'--fps',60,
-         '--start',start,'--duration',duration,'--bake-only','--output',out])
+         '--start',start,'--duration',duration,'--warmup',warmup,'--bake-only','--output',out])
     (out/'bake-timing.json').write_text(json.dumps({'seconds':time.monotonic()-started}))
     diagnostics = json.loads((out/'diagnostics.json').read_text())
     times = {start+i*.25 for i in range(math.ceil(duration/.25))}
@@ -68,7 +68,7 @@ def render(part):
     task.render(part)
 
 
-def assemble():
+def assemble(*,parallel=False):
     from handcam import unpack,prepare_resources
     from chart import load_chart
     from phigros_renderer import mix_audio
@@ -100,8 +100,12 @@ def assemble():
     diagnostics = json.loads(Path('output/full/diagnostics.json').read_text())
     numeric = json.loads(Path('output/full/pose-numeric.json').read_text())
     bakes = [json.loads(next(Path('assembled').rglob(f'part{i}-provenance.json')).read_text()) for i in range(8)]
-    assert len({b['source_blend_sha256'] for b in bakes})==1
-    assert all(b['max_slice_bone_error_m']<2e-6 for b in bakes)
+    if parallel:
+        assert len({b['plan_sha256'] for b in bakes})==1
+        assert json.loads(Path('output/full/seam-validation.json').read_text())['passed']
+    else:
+        assert len({b['source_blend_sha256'] for b in bakes})==1
+        assert all(b['max_slice_bone_error_m']<2e-6 for b in bakes)
     boundaries = [json.loads(next(Path('assembled').rglob(f'part{i}-boundary-poses.json')).read_text()) for i in range(8)]
     seams = []
     for before,after in zip(boundaries,boundaries[1:]):
@@ -109,7 +113,7 @@ def assemble():
         distances = [math.dist(bone['tail'],b['rigs'][name]['bones'][key]['tail'])*1000
                      for name,arm in a['rigs'].items() for key,bone in arm['bones'].items()]
         seams.append({'time':b['time'],'max_bone_tail_step_mm':max(distances),
-                      'shared_continuous_animation':True})
+                      'shared_continuous_animation':not parallel})
     with target.open('rb') as stream:
         digest = hashlib.file_digest(stream,'sha256').hexdigest()
     summary = {'max_error_mm':diagnostics['max_error_mm'],
@@ -125,15 +129,27 @@ def assemble():
     report = {'media':media,'sha256':digest,'bytes':target.stat().st_size,'full_decode':'passed',
         'audio_mix':audio,'baked_pose_diagnostics':summary,'bakes':bakes,'segment_boundaries':seams,
         'contact_refinement':geometry,'native_ap_validated':False,'image_inspection':False}
+    display_path = Path('output/plan/native-display-audit.json')
+    if display_path.exists():
+        display = json.loads(display_path.read_text())
+        assert display['passed']
+        assert all(b['plan_sha256'] == display['plan_sha256'] for b in bakes)
+        report['native_display_contact_audit'] = display
+        shutil.copyfile(display_path, delivery/'native-display-audit.json')
+    if parallel:
+        report['parallel_seam_validation']=json.loads(Path('output/full/seam-validation.json').read_text())
     (delivery/'validation.json').write_text(json.dumps(report,indent=2))
     shutil.copyfile('output/full/diagnostics.json',delivery/'pose-diagnostics.json')
     shutil.copyfile('output/full/pose-numeric.json',delivery/'pose-numeric.json')
     (delivery/'DELIVERY.md').write_text(
         '# Desultory Signals AT18 — refined export\n\n'
         '1920 × 1080, 60 FPS, 9045 frames, 150.750 seconds. Full decoding passed.\n\n'
-        'Aligned block boundaries; central 50% Hold / 30% Drag planning bands; '
-        'authored held-contact relays and connected Drag strokes. All render segments '
-        'come from one shared continuous bake. No image inspection was performed.\n\n'
+        'Official displaced block boundaries and point-sampled material textures; '
+        'central 50% Tap/Hold / 30% Drag planning bands; '
+        'authored held-contact relays and connected Drag strokes. '
+        + ('Eight parallel bakes passed same-time joint continuity checks at their joins. ' if parallel else
+           'All render segments come from one shared continuous bake. ')
+        + 'No image inspection was performed.\n\n'
         f'Actual maximum skin contact error: {summary["max_error_mm"]:.3f} mm. '
         f'Contact samples over 1 mm: {summary["contact_errors_over_1mm"]}. '
         f'Collision samples: {summary["collision_samples"]}. '

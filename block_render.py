@@ -38,7 +38,7 @@ def _dilate(a):
 
 
 class BlockRenderer:
-    def __init__(self,blocks,width,height,use_gpu=True,boundary_mode='aligned'):
+    def __init__(self,blocks,width,height,use_gpu=True,boundary_mode='native'):
         if boundary_mode not in ('aligned', 'native'):
             raise ValueError(f'Unknown block boundary mode: {boundary_mode}')
         self.boundary_mode = boundary_mode
@@ -64,9 +64,9 @@ class BlockRenderer:
         self.effects={name:skia.RuntimeEffect.MakeForShader((ASSETS/f'{name}.sksl').read_text())
                       for name in ('compose','active','disabled')}
         self.noise=skia.Image.open(str(ASSETS/'displace.png')).makeShader(
-            skia.TileMode.kRepeat,skia.TileMode.kRepeat,skia.SamplingOptions(skia.FilterMode.kLinear))
+            skia.TileMode.kMirror,skia.TileMode.kMirror,skia.SamplingOptions(skia.FilterMode.kNearest))
         self.spark=skia.Image.open(str(ASSETS/'spark.png')).makeShader(
-            skia.TileMode.kRepeat,skia.TileMode.kRepeat,skia.SamplingOptions(skia.FilterMode.kLinear))
+            skia.TileMode.kRepeat,skia.TileMode.kRepeat,skia.SamplingOptions(skia.FilterMode.kNearest))
         self.black=skia.Shaders.Color(skia.ColorBLACK)
 
     def surface(self,size):
@@ -98,6 +98,20 @@ class BlockRenderer:
         for key,value in children.items(): b.setChild(key,value)
         return b.makeShader()
 
+    def active_mask(self, geometry, seconds):
+        """Shared displaced mask for rendering and numerical contact audits.
+
+        Caller must enter self.native when using the OpenGL backend.
+        """
+        raw = self.mask(geometry)
+        target = self.surface(self.size)
+        shader = self.shader('compose', seconds,
+            {'mask': self.sampler(raw), 'noise': self.noise},
+            resolution=self.size,
+            displacementStrength=.1 if self.boundary_mode == 'native' else 0.)
+        target.getCanvas().drawPaint(skia.Paint(Shader=shader))
+        return target.makeImageSnapshot()
+
     def draw(self,canvas,seconds):
         if self.gpu is None:
             return self._draw(canvas,seconds)
@@ -121,12 +135,7 @@ class BlockRenderer:
         geometries={k:compose(v) for k,v in phases.items()}
         # The APK uses 1/8-size point-filtered masks, 1/4-size effects and a
         # 1/6-size scene-color capture. Keep that characteristic blocky edge.
-        raw=self.mask(geometries['active'])
-        mask_surface=self.surface(self.size)
-        compose_shader=self.shader('compose',seconds,{'mask':self.sampler(raw),'noise':self.noise},
-            resolution=self.size,displacementStrength=.1 if self.boundary_mode == 'native' else 0.)
-        mask_surface.getCanvas().drawPaint(skia.Paint(Shader=compose_shader))
-        mask=mask_surface.makeImageSnapshot()
+        mask=self.active_mask(geometries['active'],seconds)
         pixels=mask.toarray(colorType=skia.ColorType.kRGBA_8888_ColorType)[:,:,0].astype(np.float32)/255
         pixels=np.repeat(np.repeat(pixels,2,axis=0),2,axis=1)
         edge=np.clip(_dilate(pixels)-pixels,0,1)
@@ -137,6 +146,8 @@ class BlockRenderer:
             if weight<.01: break
             expanded=_dilate(grown)
             glow+=np.clip(expanded-grown,0,1)*(1-pixels)*weight
+            # Native ping-pong targets are RG16 (two UNorm8 channels).
+            glow=np.rint(np.clip(glow,0,1)*255)/255
             grown=expanded
         rgba=np.zeros((*pixels.shape,4),dtype=np.uint8)
         rgba[:,:,0]=np.rint(edge*255).astype(np.uint8)

@@ -66,3 +66,47 @@ avoid.step_dt = 1/60
 shift = avoid.move_wrist(1,Vector((.05,0,0)),Vector(),roots,samples,project=True)
 assert shift.length <= .18/60+1e-7, shift
 print('Airborne FK/IK transitions, 1000 exact restorations and final correction speed checks passed')
+
+# A held index and an airborne middle finger may approach in armature space.
+# Correct the idle chain while preserving every held joint and target exactly.
+data = bpy.data.armatures.new('finger-order-test')
+arm = bpy.data.objects.new('finger-order-test', data)
+bpy.context.collection.objects.link(arm)
+bpy.context.view_layer.objects.active = arm
+arm.select_set(True)
+bpy.ops.object.mode_set(mode='EDIT')
+chains = {}
+for finger, x in (('index', -.012), ('middle', .012)):
+    chain = []
+    parent = None
+    for i in range(3):
+        bone = data.edit_bones.new(f'{finger}-{i}')
+        bone.head, bone.tail = (x, i*.03, 0), (x, (i+1)*.03, 0)
+        if parent:
+            bone.parent, bone.use_connect = parent, True
+        parent = bone
+        chain.append(bone.name)
+    chains[finger] = tuple(chain)
+bpy.ops.object.mode_set(mode='OBJECT')
+targets = {}
+for finger, angle in (('index', 0.), ('middle', .3)):
+    for name in chains[finger]:
+        arm.pose.bones[name].rotation_mode = 'XYZ'
+    arm.pose.bones[chains[finger][0]].rotation_euler.z = angle
+    target = bpy.data.objects.new(f'{finger}-order-target', None)
+    bpy.context.collection.objects.link(target)
+    targets[1, finger] = target
+    ik = arm.pose.bones[chains[finger][-1]].constraints.new('IK')
+    ik.target, ik.chain_count, ik.influence = target, 3, 0.
+bpy.context.view_layer.update()
+samples = {(1, f): (Vector(), 1., f=='index') for f in chains}
+held = [arm.pose.bones[n].matrix.copy() for n in chains['index']]
+target_before = targets[1, 'index'].location.copy()
+avoid = PoseAvoidance({1: arm}, targets, chains)
+assert avoid.separate_airborne_order(samples) > 0
+gap = arm.pose.bones[chains['middle'][-1]].tail.x - arm.pose.bones[chains['index'][-1]].tail.x
+assert gap >= .0179, gap
+for before, name in zip(held, chains['index']):
+    assert max(abs(before[i][j]-arm.pose.bones[name].matrix[i][j]) for i in range(4) for j in range(4)) < 1e-7
+assert targets[1, 'index'].location == target_before
+print('Airborne finger order corrected without changing held joints or targets')

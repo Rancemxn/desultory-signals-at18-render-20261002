@@ -167,7 +167,7 @@ def attach_plan(content, contacts, plan, time_offset=0.):
                 not guide['prepare']<=guide['start']<guide['end']<=guide['release'] or abs(guide['yaw'])>.65):
             raise ValueError('Invalid authored palm orientation guide')
     for name,value in plan.get('pose_style',{}).items():
-        maximum = {'palm_lift_low':.1,'palm_lift_high':.1,'palm_strike_speed':5.,'transfer_sway':.05}.get(name)
+        maximum = {'palm_lift_low':.1,'palm_lift_high':.1,'palm_strike_speed':5.,'transfer_sway':.05,'finger_lateral_limit':.5}.get(name)
         if maximum is None or not isinstance(value,(float,int)) or not math.isfinite(value) or not 0<=value<=maximum:
             raise ValueError('Invalid authored pose style')
     records = plan.get('contacts', [])

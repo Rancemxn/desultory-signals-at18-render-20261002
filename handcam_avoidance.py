@@ -25,6 +25,67 @@ class PoseAvoidance:
         self.stats = dict(samples=0, trials=0, accepted=0, cached_failures=0,
                           max_wrist_shift_mm=0., max_finger_shift_mm=0.)
 
+    def separate_airborne_order(self, samples, clearance=.018):
+        """Separate adjacent evaluated finger chains, moving only airborne joints.
+
+        Work in armature coordinates so a turning wrist cannot reverse the test.
+        Preserve the evaluated IK pose before changing the MCP spread; active
+        fingers and their targets are never edited by this pass.
+        """
+        import bpy
+        from mathutils import Vector
+
+        changed = 0
+        pairs = (('index', 'middle'), ('middle', 'ring'), ('ring', 'little'))
+        for _ in range(4):
+            corrected = False
+            for side, arm in self.rigs.items():
+                scale = max(abs(v) for v in arm.scale)
+                for first, second in pairs:
+                    if first not in self.chains or second not in self.chains:
+                        continue
+                    a, b = self.chains[first], self.chains[second]
+                    sign = 1 if arm.data.bones[b[0]].head_local.x > arm.data.bones[a[0]].head_local.x else -1
+                    def gap():
+                        # Fingertips can be correctly ordered while a curled
+                        # middle phalanx crosses its neighbour. Separate the
+                        # entire lateral envelope, including the joint heads.
+                        left = [sign * arm.pose.bones[n].tail.x for n in a]
+                        right = [sign * arm.pose.bones[n].tail.x for n in b]
+                        left.append(sign * arm.pose.bones[a[0]].head.x)
+                        right.append(sign * arm.pose.bones[b[0]].head.x)
+                        return (min(right) - max(left)) * scale
+                    missing = clearance - gap()
+                    free = [(side, f) for f in (first, second)
+                            if (side, f) in samples and not samples[side, f][2]]
+                    if missing <= .00001 or not free:
+                        continue
+                    derivatives = []
+                    for key in free:
+                        bone = arm.pose.bones[self.chains[key[1]][0]]
+                        points = [arm.pose.bones[n].tail.copy() for n in self.chains[key[1]]]
+                        points.append(bone.head.copy())
+                        point = (max if key[1] == first else min)(points, key=lambda p: sign*p.x)
+                        reference = (bone.parent.matrix @ bone.parent.bone.matrix_local.inverted()
+                                     @ bone.bone.matrix_local) if bone.parent else bone.bone.matrix_local
+                        axis = (reference.to_3x3() @ Vector((0., 0., 1.))).normalized()
+                        derivative = axis.cross(point-bone.head).x * scale * sign * (-1 if key[1] == first else 1)
+                        if abs(derivative) > 1e-6:
+                            derivatives.append((key, bone, derivative))
+                    denominator = sum(d*d for _, _, d in derivatives)
+                    for key, bone, derivative in derivatives:
+                        self.curl_finger(key, Vector())
+                        step = missing * derivative / denominator
+                        bone.rotation_euler.z += max(-.08, min(.08, step))
+                        corrected = True
+                        changed += 1
+                    if derivatives:
+                        bpy.context.view_layer.update()
+            if not corrected:
+                break
+        self.stats['airborne_order_adjustments'] = self.stats.get('airborne_order_adjustments', 0) + changed
+        return changed
+
     def move_wrist(self, side, delta, angles, roots, samples, project=False):
         from mathutils import Euler, Matrix, Vector
 
@@ -104,6 +165,8 @@ class PoseAvoidance:
     def cup_palm(self, key, angles):
         # These metacarpal/opposition bones move the knuckle, while contact IK keeps the pad down.
         bone = self.rigs[key[0]].pose.bones[self.chains[key[1]][0]].parent
+        if key[1]!='thumb' and getattr(self,'finger_lateral_limit',None) is not None:
+            angles=(angles[0],0.,0.)
         bone.rotation_euler = tuple(a + b for a, b in zip(bone.rotation_euler, angles))
 
     def apply(self, roots, samples, dt):
@@ -340,6 +403,9 @@ class PoseAvoidance:
             for kind, key, delta, angles in proposals:
                 if trials_left <= 0:
                     break
+                if (getattr(self,'finger_lateral_limit',None) is not None and kind in ('finger','curl')
+                        and key[1]!='thumb'):
+                    continue
                 self.restore(original, roots, samples)
                 delta = delta * scale if kind != 'curl' else delta
                 if self.motion_limits:

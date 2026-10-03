@@ -262,6 +262,7 @@ def main(argv=None):
     parser.add_argument('--plan-only', action='store_true', help='write touch/motion plans and diagnostics without baking or rendering')
     parser.add_argument('--keyframes', action='store_true', help='render five inspection frames instead of the video')
     parser.add_argument('--bake-only', action='store_true', help='solve and save the full hand animation without rendering media')
+    parser.add_argument('--warmup', type=float, default=1., help='seconds of motion history before a bake segment')
     parser.add_argument('--screen-video', action='store_true', help='stream chart frames into video instead of saving every PNG')
     parser.add_argument('--stream', action='store_true', help='render a baked animation in small video chunks, saving disk space')
     parser.add_argument('--resume', action='store_true', help='resume video rendering from the saved job in --output; uses saved settings')
@@ -270,6 +271,8 @@ def main(argv=None):
         args.lift_height = .045 if args.algorithm == 5 or args.motion_plan else .025
     if args.motion_plan and not args.psap:
         parser.error('--motion-plan requires its matching --psap')
+    if not math.isfinite(args.warmup) or not 0 <= args.warmup <= 20:
+        parser.error('--warmup must be between 0 and 20 seconds')
     if args.stream and (args.video or args.keyframes or args.bake_only or args.engine != 'workbench'):
         parser.error('--stream requires Workbench and built-in chart rendering; omit --video, --keyframes and --bake-only')
     if not all(math.isfinite(v) for v in (args.start, args.duration, args.hand_scale, args.contact_height, args.lift_height,
@@ -385,11 +388,11 @@ def main(argv=None):
         if not motion_plan and not any(c['end'] >= args.start and c['start'] < args.start + duration for c in contacts):
             raise ValueError('No contacts overlap the requested clip')
         # Algo5 has already planned the whole song; keep its rest schedule but only solve nearby fingers.
-        contacts = [c for c in contacts if c['end'] >= args.start - 1 and c['start'] <= args.start + duration + 1]
+        contacts = [c for c in contacts if c['end'] >= args.start - args.warmup and c['start'] <= args.start + duration + 1]
         screen_w = .28
         screen_h = screen_w * chart.height / chart.width
         resources = prepare_resources(args.resources.resolve(), out / 'resources') if not args.video else args.resources.resolve()
-        job = dict(start=args.start, duration=duration, frames=frame_count, fps=args.fps,
+        job = dict(start=args.start, duration=duration, frames=frame_count, fps=args.fps, warmup=args.warmup,
                    width=args.width, height=args.height, output=str(out), model=str(args.model.resolve()),
                    contacts=contacts, screen=[screen_w, screen_h], view_width=screen_w / args.screen_fill, camera_y=-.015,
                    resources=str(resources), illustration=str(picture) if picture else None,
@@ -429,7 +432,7 @@ def main(argv=None):
                 for name in ('prepare','start','end','release'):
                     guide[name] += chart.offset
             job['pose_guides'] = guides
-            for name in ('palm_lift_low','palm_lift_high','palm_strike_speed','transfer_sway'):
+            for name in ('palm_lift_low','palm_lift_high','palm_strike_speed','transfer_sway','finger_lateral_limit'):
                 if name in motion_plan.get('pose_style',{}):
                     job[name] = motion_plan['pose_style'][name]
         _, _, sw, sh = screen_rect(job)

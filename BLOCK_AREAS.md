@@ -4,13 +4,13 @@ This isolated Desultory Signals export reads all 160 `blockAreaList` entries.
 The planner and renderer share the geometry in `block_area.py`; timestamps and
 source note IDs are preserved. These changes are confined to this export snapshot.
 
-The refinement export defaults to **aligned boundaries**: the active fill uses
-the authored geometry without the native shader's UV displacement. Interior
-noise, color and glow remain. This is an intentional presentation change so
-the visible filled area and the planning boundary agree. `boundary_mode='native'`
-retains the earlier displaced mask for comparison. Native touch rejection still
-uses the independently reconstructed two-mask rule below; the refined planner
-also avoids the larger displayed geometry with clearance for raster edges.
+The current renderer defaults to **native boundaries**: it applies the official
+0.1-strength noise displacement before generating the pixelated edge and glow.
+`boundary_mode='aligned'` remains available to reproduce the V18 delivery's
+undisplaced boundary. V21's existing plan validation used aligned geometry;
+it does not validate the restored native visual mask. Native touch rejection
+still uses the independently reconstructed two-mask rule below, which is
+distinct from the displaced visual fill.
 
 ## Native evidence
 
@@ -89,3 +89,35 @@ recorded contact error is 85.581 mm, and some samples penetrate the screen or
 other fingers. A valid planned touch path is not evidence that every rendered
 skin contact is valid. The delivery reports retain these diagnostics, and native
 AP validation remains false.
+
+## Official material review, 2026-10-03
+
+Text and binary metadata review of the supplied 4.0.1 APK confirmed:
+
+- `BlockNoise1` (texture 30): 256 x 256, Point filtering, Mirror on both axes.
+- `PointNoise` (texture 17): 128 x 128, Point filtering, Repeat on both axes.
+- Compose displacement strength 0.1, speed 2.59, tiling 2.13 x 1.02.
+- Serialized BlockRender component 334: edge size 1, glow radius 6,
+  falloff 2.65, pass threshold 0.01.
+- `RenderEffects` at 0x1D6F0AC generates the edge from the composed mask,
+  then independently grows glow rings from that same mask. Glow is not grown
+  from the finished edge. `UpdateDilateTexelSize` at 0x1D6EB9C uses effect-size
+  texels. These were checked using ARM64 disassembly.
+- `Start` allocates point-filtered mask and ping-pong textures, a bilinear
+  effect texture, and point-filtered scene capture. Effect/ping-pong format
+  25 is RG16 (two normalized 8-bit channels); glow now quantizes each pass.
+- Active blending is One / OneMinusSrcAlpha; disabled blending is One / One.
+  Existing Skia SrcOver/Plus paths match those blend factors.
+
+The previous renderer used Repeat/Linear for both noise assets and disabled
+compose displacement by default. Those differences are corrected. Existing
+fill/edge/glow colors, material opacities, HSV spark mixing, six-pixel background
+quantization, and time scaling match the extracted idle-path shader.
+
+`audit_display_contacts.py` checks planned contact centers against the actual
+composed fill and one-texel edge at 1080p60 frame times. It writes only a JSON
+report and does not open a viewer or save preview images. This check is separate
+from geometric touch rejection and from a saved-mesh contact audit. Platform
+color-space and rasterization differences, disabled/ready transition details,
+and blocked-touch feedback remain limitations; this is not a pixel-identical
+Unity capture. No images were visually inspected for this revision.

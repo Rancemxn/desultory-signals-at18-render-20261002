@@ -48,7 +48,8 @@ def main():
     _,decoded = contacts_from_psap(data)
     attach_plan(data,decoded,plan)
     print('PSAP lifecycle and physical identities passed',flush=True)
-    geometry = ContactGeometry(chart)
+    geometry = ContactGeometry(chart, physical_screen=plan['physical_screen'],
+        extra_clearance_m=plan.get('comfort',{}).get('extra_block_clearance_m',0.))
     notes = geometry.notes
     assert {n for c in contacts for n in c['note_ids']}==set(notes)
     failures = []
@@ -68,7 +69,7 @@ def main():
         if note.type==NoteType.HOLD:
             times += [note.seconds+i*.001 for i in range(1,math.ceil(note.hold/.001))]
         half = JUDGE_HALF_DRAG if note.type in (NoteType.DRAG,NoteType.FLICK) else JUDGE_HALF_TAP
-        ratio = .5 if note.type==NoteType.HOLD else .3 if note.type==NoteType.DRAG else .85
+        ratio = .5 if note.type in (NoteType.HOLD,NoteType.TAP) else .3 if note.type==NoteType.DRAG else .85
         for t in times:
             when = max(note.seconds,min(t,note.seconds+note.hold-.001)) if note.type==NoteType.HOLD else note.seconds
             center,angle = line.pos(when,note.offset),line.angle@when
@@ -85,7 +86,11 @@ def main():
                 coverage_failures.append({'note':nid,'time':t,'type':int(note.type)})
                 break
     topology = audit(contacts,plan['physical_screen'])
-    report = dict(notes=len(notes),contacts=len(contacts),boundary_mode='aligned',hold_width_ratio=.5,drag_width_ratio=.3,
+    report = dict(notes=len(notes),contacts=len(contacts),boundary_mode='aligned',tap_width_ratio=.5,hold_width_ratio=.5,drag_width_ratio=.3,
+        extra_block_clearance_m=geometry.extra_clearance_m,
+        clearance_exceptions=[{'notes':c['note_ids'],'start':c['start'],'end':c['end'],
+            'clearance_m':c['block_clearance_m'],'reason':c.get('clearance_reason')}
+            for c in contacts if 'block_clearance_m' in c],
         display_guard_normalized=geometry.display_margin,geometry_failures=failures,note_coverage_failures=coverage_failures,
         topology=topology,psap_lifecycle='passed',sample_step_ms=1,block_event_boundaries_checked=True,
         native_ap_validated=False,image_inspection=False)

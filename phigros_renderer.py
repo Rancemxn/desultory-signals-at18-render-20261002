@@ -272,8 +272,6 @@ class PhigrosRenderer(ChartRenderer):
         for line, visual in self.visuals:
             self.draw_note(canvas, line, visual, seconds)
         self.draw_effects(canvas, seconds)
-        if self.block_renderer:
-            self.block_renderer.draw(canvas,seconds)
         w, h = self.width, self.height
         unit = min(w / 18.75, h / 14)
         combo, score = self.stats(seconds)
@@ -291,6 +289,10 @@ class PhigrosRenderer(ChartRenderer):
             self.ui_text(canvas, 'AUTOPLAY', w / 2, 2.05 * unit, .53 * unit, .5, element='combo', seconds=seconds)
         self.ui_text(canvas, self.title, .65 * unit, h - .66 * unit, .63 * unit, max_width=w * .7, element='name', seconds=seconds)
         self.ui_text(canvas, self.level, w - .65 * unit, h - .66 * unit, .63 * unit, 1., w * .23, element='level', seconds=seconds)
+        # Capture the complete game screen, including attached HUD elements,
+        # so notes and UI receive the same block-area material treatment.
+        if self.block_renderer:
+            self.block_renderer.draw(canvas,seconds)
 
 
 def mix_audio(music, resources, hits, start, duration, volume, output):

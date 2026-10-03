@@ -35,10 +35,10 @@ class RefinementTests(unittest.TestCase):
         self.assertFalse(validate_contact(g,c,path))
 
     def test_ratios_are_fractions_of_full_width(self):
-        for kind,ratio,half in ((NoteType.HOLD,.5,.106875),(NoteType.DRAG,.3,.118125)):
+        for kind,ratio,half in ((NoteType.TAP,.5,.106875),(NoteType.HOLD,.5,.106875),(NoteType.DRAG,.3,.118125)):
             chart,_ = fixture(kind,[8.],[0.],1. if kind==NoteType.HOLD else 0.)
             g = ContactGeometry(chart)
-            c = dict(kind='hold' if kind==NoteType.HOLD else 'drag',note_ids=[0],start=0.,end=1.)
+            c = dict(kind={NoteType.HOLD:'hold',NoteType.TAP:'tap',NoteType.DRAG:'drag'}[kind],note_ids=[0],start=0.,end=1.)
             bounds = g.zone(c,0.).bounds
             self.assertAlmostEqual(bounds[2]-bounds[0],2*half*ratio,places=10)
 
@@ -50,6 +50,21 @@ class RefinementTests(unittest.TestCase):
         path,report = refine_contact(g,c)
         self.assertTrue(report['stationary'])
         self.assertFalse(validate_contact(g,c,path))
+
+    def test_extra_block_clearance_uses_physical_screen_dimensions(self):
+        from unittest.mock import patch
+        from shapely.geometry import box
+        chart,_=fixture(NoteType.TAP,[8.],[0.])
+        with patch('contact_refinement.compose',return_value=box(6.4,3.6,9.6,5.4)):
+            base=ContactGeometry(chart).blocked(0.).bounds
+            g=ContactGeometry(chart,extra_clearance_m=.006)
+            padded=g.blocked(0.).bounds
+            for axis,size in enumerate((.28,.1575)):
+                distance=(padded[axis+2]-base[axis+2])*size
+                self.assertGreaterEqual(distance,.006)
+                self.assertLess(distance,.00602)
+            exception=g.blocked(0.,.004).bounds
+            self.assertLess(exception[2],padded[2])
 
     def test_drag_travel_is_not_constrained_to_nearest_note_strip(self):
         chart,_ = fixture(NoteType.DRAG,[4.,12.],[0.,.2])
