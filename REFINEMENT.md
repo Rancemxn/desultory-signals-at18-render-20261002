@@ -80,3 +80,8 @@ index-finger intersection without changing any note time.
 The opening pair of long Holds is assigned to one middle finger per hand.
 The three later right-side Taps use the ring finger while the middle finger
 remains down, avoiding the former impossible left-hand span across both Holds.
+
+The five Flicks at the end of the opening Holds use measured relative finger
+offsets, with the right ring finger replacing the former thumb assignment.
+They start 10 ms before the beat and retain their authored 0.64 m/s swipe speed.
+This shortens contact travel while the middle fingers are still holding.
