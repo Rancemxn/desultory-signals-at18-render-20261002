@@ -217,6 +217,27 @@ def repair_topology(labels,unary,neighbors,contacts=None):
     raise ValueError('No non-overlapping ordered finger assignment in conflict neighborhood')
 
 
+def split_order_conflicts(contacts,screen,max_span):
+    """Retain a crossing Hold path while permitting overlapping finger relays."""
+    bad_ids={n for v in audit(contacts,screen)['same_hand_crossings'] for n in v['a']+v['b']}
+    result=[]
+    for old in contacts:
+        if (old['kind']!='hold' or old.get('collective_hold') or old['end']-old['start']<=1.
+                or not set(old['note_ids'])&bad_ids):
+            result.append(copy.deepcopy(old));continue
+        count=math.ceil((old['end']-old['start'])/max_span)
+        for i in range(count):
+            c=copy.deepcopy(old)
+            start=round(old['start']+i*(old['end']-old['start'])/count,3)
+            end=min(old['end'],round(old['start']+(i+1)*(old['end']-old['start'])/count+.020,3))
+            c.update(start=start,end=end,rule='finger_order_relay')
+            c['points']=[[start,*point_at(old['points'],start)],
+                *[p for p in old['points'] if start<p[0]<end-.001],
+                [round(end-.001,3),*point_at(old['points'],end-.001)]]
+            result.append(c)
+    return sorted(result,key=lambda c:(c['start'],c['pointer']))
+
+
 def audit(contacts,screen):
     crossings,overlaps,transfers = [],[],[]
     last = {}
@@ -286,7 +307,26 @@ def main():
         a = descend(initial,unary,neighbors)
         b = descend(beam,unary,neighbors)
         labels = min((a,b),key=lambda x:objective(x,unary,neighbors))
-        labels = repair_topology(labels,unary,neighbors,contacts)
+        try:
+            labels = repair_topology(labels,unary,neighbors,contacts)
+        except ValueError:
+            source=copy.deepcopy(contacts)
+            for c,label in zip(source,labels):
+                c['hand'],c['finger']=keys[label]
+            for span in (.8,.4,.2):
+                trial=split_order_conflicts(source,plan['physical_screen'],span)
+                if len(trial)==len(source):
+                    raise ValueError('No relay-capable Hold at finger-order conflict')
+                u,edges=graph(trial,plan)
+                chosen=np.array([keys.index((c['hand'],c['finger'])) for c in trial])
+                try:chosen=repair_topology(chosen,u,edges,trial)
+                except ValueError:continue
+                contacts,unary,neighbors,labels=trial,u,edges,chosen
+                plan['contacts']=contacts
+                print('ASSIGN_ORDER_RELAYS',len(source),len(contacts),'span',span,flush=True)
+                break
+            else:
+                raise ValueError('Finger-order relay search exhausted')
         after = objective(labels,unary,neighbors)
     for c,label in zip(contacts,labels):
         c['hand'],c['finger'] = keys[label]

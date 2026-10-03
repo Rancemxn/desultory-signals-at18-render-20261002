@@ -6,6 +6,24 @@ from refine_assignments import KEYS,audit,beam_assign,graph,objective
 
 
 class AssignmentTests(unittest.TestCase):
+    def test_order_relays_keep_crossing_hold_paths_and_continuous_coverage(self):
+        from refine_assignments import split_order_conflicts
+        from handcam_motion import point_at
+        contacts=[dict(start=3.,end=5.1,pointer=i,points=[[3.,a,.5],[5.099,b,.5]],
+                       kind='hold',note_ids=[i],hand='left',finger=finger)
+                  for i,(a,b,finger) in enumerate(((.7,.3,'index'),(.3,.7,'middle')))]
+        result=split_order_conflicts(contacts,[.28,.1575],.4)
+        self.assertGreater(len(result),2)
+        for old in contacts:
+            pieces=[c for c in result if c['note_ids']==old['note_ids']]
+            self.assertEqual(pieces[0]['start'],old['start'])
+            self.assertEqual(pieces[-1]['end'],old['end'])
+            for a,b in zip(pieces,pieces[1:]):self.assertGreaterEqual(a['end']-b['start'],.0199)
+            for c in pieces:
+                for t,x,y in c['points']:
+                    self.assertAlmostEqual(x,point_at(old['points'],t)[0])
+                    self.assertAlmostEqual(y,point_at(old['points'],t)[1])
+
     def test_exact_repair_removes_forbidden_pair_without_reusing_finger(self):
         from refine_assignments import repair_topology
         unary=np.zeros((3,3))
