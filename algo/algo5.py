@@ -35,7 +35,7 @@ class Settings:
     fatigue_seconds: float = 4.
     recovery_seconds: float = .65
     allow_degraded: bool = True
-    fingers: tuple[str, ...] = ('index', 'middle', 'ring', 'thumb')
+    fingers: tuple[str, ...] = ('index', 'middle', 'ring', 'thumb', 'little')
     visual_radius: float = .012
     hold_margin: float = .004
     flick_distance: float = .16
@@ -120,6 +120,7 @@ class Planner:
         self.pause_poly = box(0, 0, w * .1, h * .1).union(box(w * .9, 0, w, h * .1))
         self.zones, self.paths = {}, {}
         self.corridor_paths = {}
+        self.terminal_paths = {}
         self.rejected = Counter()
         self.tasks = []
         for line in chart.lines:
@@ -412,18 +413,40 @@ class Planner:
             for seed in self.seeds(task, state, side, finger):
                 directions = (1, -1, 2, -2) if task.note.type == NoteType.FLICK else (1,)
                 for direction in directions:
+                    effective_end = end
                     points = self.path(task, seed, end, direction)
-                    if points is None and task.note.type in (NoteType.HOLD,NoteType.DRAG):
+                    if points is None and task.note.type in (NoteType.HOLD,NoteType.DRAG,NoteType.TAP):
                         points = self.corridor_path(task,end)
+                    if points is None and task.note.type == NoteType.HOLD:
+                        if task.id not in self.terminal_paths:
+                            self.terminal_paths[task.id] = (None,end)
+                            # Only an empty terminal zone permits this animation
+                            # grace. Earlier geometry remains fully validated.
+                            from contact_refinement import ContactGeometry
+                            g=ContactGeometry(self.chart,physical_screen=self.physical,extra_clearance_m=.004)
+                            c=dict(kind='hold',note_ids=[task.id],start=t,end=(end+1)/1000)
+                            if g.zone(c,end/1000).is_empty:
+                                earliest=math.ceil((task.note.seconds+task.note.hold-.020)*1000)-1
+                                for shortened in range(end-1,max(task.start,earliest)-1,-1):
+                                    if g.zone(c,(shortened+1)/1000-1e-7).is_empty:
+                                        continue
+                                    trial=self.corridor_path(task,shortened)
+                                    if trial is not None:
+                                        self.terminal_paths[task.id]=(trial,shortened)
+                                        break
+                        points,effective_end=self.terminal_paths[task.id]
                     if points is None:
                         self.rejected['judge_geometry'] += 1
                         continue
                     record = dict(pointer=(0 if side == -1 else 5) + FINGER_ORDER.index(finger),
-                                  hand=hand, finger=finger, start=t, end=(end + 1) / 1000,
+                                  hand=hand, finger=finger, start=t, end=(effective_end + 1) / 1000,
                                   points=points, kind=task.note.type.name.lower(), note_ids=[task.id],
                                   beat=task.beat / 1000, burst_cost=burst_cost,
                                   effort=.018 if task.note.type == NoteType.DRAG else .055,
                                   planned=True)
+                    if effective_end != end:
+                        record['terminal_hold_release_ms'] = (task.note.seconds+task.note.hold-record['end'])*1000
+                        record['terminal_hold_release_reason'] = 'empty legal zone within final 20 ms'
                     violations, movement, posture = self.constraints(record, state, side, finger)
                     if over:
                         violations.append('burst_capacity')

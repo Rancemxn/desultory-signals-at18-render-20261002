@@ -71,6 +71,11 @@ def main():
         half = JUDGE_HALF_DRAG if note.type in (NoteType.DRAG,NoteType.FLICK) else JUDGE_HALF_TAP
         ratio = .5 if note.type in (NoteType.HOLD,NoteType.TAP) else .3 if note.type==NoteType.DRAG else .85
         for t in times:
+            if note.type==NoteType.HOLD:
+                terminal=[c for c in assigned if c.get('terminal_hold_release_ms') is not None
+                          and 0 <= note.seconds+note.hold-c['end'] <= .0200001]
+                if terminal and t>=max(c['end'] for c in terminal):
+                    continue
             when = max(note.seconds,min(t,note.seconds+note.hold-.001)) if note.type==NoteType.HOLD else note.seconds
             center,angle = line.pos(when,note.offset),line.angle@when
             covered = False
@@ -87,6 +92,9 @@ def main():
                 break
     topology = audit(contacts,plan['physical_screen'])
     report = dict(notes=len(notes),contacts=len(contacts),boundary_mode='aligned',tap_width_ratio=.5,hold_width_ratio=.5,drag_width_ratio=.3,
+        terminal_hold_releases=[dict(notes=c['note_ids'],end=c['end'],early_ms=c['terminal_hold_release_ms'],
+                                    reason=c['terminal_hold_release_reason'])
+                                for c in contacts if 'terminal_hold_release_ms' in c],
         extra_block_clearance_m=geometry.extra_clearance_m,
         clearance_exceptions=[{'notes':c['note_ids'],'start':c['start'],'end':c['end'],
             'clearance_m':c['block_clearance_m'],'reason':c.get('clearance_reason')}

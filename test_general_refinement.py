@@ -6,6 +6,28 @@ from contact_refinement import ContactGeometry, validate_contact
 
 
 class GeneralRulesTests(unittest.TestCase):
+    def test_terminal_hold_release_is_limited_to_twenty_milliseconds(self):
+        from algo.algo5 import Planner,Settings,State
+        from handcam_motion import default_profile
+        for cut,expected in ((2.49,True),(2.45,False)):
+            chart,line=fixture(NoteType.HOLD,[8.],[2.],.5)
+            line.pos=lambda t,offset,cut=cut: complex(8,4.5) if t<cut else complex(80,45)
+            planner=Planner(chart,Settings(fingers=('index',)),default_profile())
+            choices=planner.choices(planner.tasks[0],State(),degraded=True)
+            self.assertEqual(bool(choices),expected)
+            for _,c in choices:
+                self.assertLessEqual(c['terminal_hold_release_ms'],20.)
+                self.assertGreater(c['terminal_hold_release_ms'],0.)
+                self.assertFalse(validate_contact(ContactGeometry(chart,extra_clearance_m=.004),c,c['points']))
+
+    def test_nine_simultaneous_contacts_can_use_auxiliary_fingers(self):
+        from algo.algo5 import Planner,Settings
+        from handcam_motion import default_profile
+        chart,_=fixture(NoteType.TAP,[2.+i*1.4 for i in range(9)],[2.]*9)
+        contacts=Planner(chart,Settings(beam_width=2,candidates_per_finger=1),default_profile()).run()
+        self.assertEqual(len(contacts),9)
+        self.assertEqual(len({(c['hand'],c['finger']) for c in contacts}),9)
+
     def test_planner_corridor_preserves_block_legality(self):
         from algo.algo5 import Planner,Settings
         from handcam_motion import default_profile
