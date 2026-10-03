@@ -1,5 +1,22 @@
 # Desultory Signals AT18 handcam render
 
+The current batch uses `batch-chart.yml` and chart-independent contact rules.
+`batch_queue.py` reserves one running workflow for each of two queues:
+
+- `index2`: `EntrancetotheChaos-IN-index2`, then `ExoplanetaryMirage-IN-index2`.
+  Both select the IN chart and allow only the left and right index fingers.
+- `original`: the original seven chart variants, using their configured IN/AT
+  difficulties and the normal finger set.
+
+Each workflow plans the complete song, bakes eight parts in parallel with shared
+initialization history, checks all seven joins, renders eight parts in parallel,
+and delivers a complete 1920×1080 60 FPS video. Variant names distinguish the
+index-only videos from earlier unrestricted deliveries. Assignment and final
+validation both enforce the allowed finger set. `validation.json` records the
+fingers actually used, geometry checks, timing adjustments and provenance.
+
+The following notes describe the earlier Desultory-specific delivery:
+
 Temporary isolated rendering task for a 150.75-second, 2026-note chart.
 The source snapshot is recorded in `source-manifest.json`.
 
