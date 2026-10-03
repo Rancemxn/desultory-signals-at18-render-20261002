@@ -14,8 +14,9 @@ def bake(part):
     duration = min(20.,150.75-start)
     out = Path(f'output/part{part}')
     # Retain the exact next segment's first frame for a same-time comparison.
-    # Three seconds of history also lets released poses settle before the cut.
-    refined_task.bake(out,start,duration+(1/60 if part<7 else 0),warmup=3.)
+    # Eight seconds eliminate the measured 60 s idle-finger divergence seen
+    # with three seconds. The final same-time audit still gates rendering.
+    refined_task.bake(out,start,duration+(1/60 if part<7 else 0),warmup=8.)
     job = json.loads((out/'job.json').read_text())
     refined_task.run([refined_task.BLENDER,'--background','--disable-autoexec',out/'handcam.blend',
         '--python-exit-code',1,'--python','capture_bake_boundaries.py','--',out/'job.json',duration])
@@ -39,7 +40,7 @@ def bake(part):
     job.update(duration=duration,frames=round(duration*60))
     (out/'job.json').write_text(json.dumps(job,indent=2))
     provenance = json.loads((out/'provenance.json').read_text())
-    provenance.update(part=part,duration=duration,frames=job['frames'],warmup_seconds=3.,
+    provenance.update(part=part,duration=duration,frames=job['frames'],warmup_seconds=8.,
                       parallel_bake=True,retained_join_frame=part<7)
     (out/'provenance.json').write_text(json.dumps(provenance,indent=2))
 
