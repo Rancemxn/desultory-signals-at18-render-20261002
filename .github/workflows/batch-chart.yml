@@ -18,7 +18,7 @@ on:
 permissions:
   contents: write
 concurrency:
-  group: sequential-general-charts
+  group: general-chart-${{ inputs.chart }}
   cancel-in-progress: false
 jobs:
   plan:

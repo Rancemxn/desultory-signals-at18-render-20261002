@@ -3,6 +3,13 @@ from batch_task import interval
 
 
 class BatchIntervalsTests(unittest.TestCase):
+    def test_queue_respects_two_cloud_workflows(self):
+        from batch_queue import available_slots
+        self.assertEqual(available_slots([]),2)
+        self.assertEqual(available_slots([dict(status='in_progress'),dict(status='completed')]),1)
+        self.assertEqual(available_slots([dict(status='in_progress'),dict(status='queued')]),0)
+        self.assertEqual(available_slots([dict(status='waiting')]*3),0)
+
     def test_eight_parts_cover_every_frame_exactly_once(self):
         for total in (8, 8380, 10342, 8221, 8661, 10725, 10498):
             parts = [interval({'frames':total},i) for i in range(8)]
