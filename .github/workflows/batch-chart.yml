@@ -15,6 +15,11 @@ on:
         description: Optional prior run whose eight completed bakes should be reused
         required: false
         type: string
+      rebake_parts:
+        description: JSON array of parts to regenerate instead of reusing bake_run
+        required: false
+        type: string
+        default: '[]'
       refine_run:
         description: Optional prior run whose final assigned contacts should be revalidated
         required: false
@@ -120,7 +125,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/runtime
-        if: ${{ inputs.bake_run == '' }}
+        if: ${{ inputs.bake_run == '' || contains(fromJSON(inputs.rebake_parts || '[]'), matrix.part) }}
       - uses: actions/download-artifact@v4
         with:
           name: planning
@@ -130,15 +135,15 @@ jobs:
           name: selected-chart
           path: inputs
       - run: python -u batch_task.py bake ${{ matrix.part }}
-        if: ${{ inputs.bake_run == '' }}
+        if: ${{ inputs.bake_run == '' || contains(fromJSON(inputs.rebake_parts || '[]'), matrix.part) }}
       - uses: actions/download-artifact@v4
-        if: ${{ inputs.bake_run != '' }}
+        if: ${{ inputs.bake_run != '' && !contains(fromJSON(inputs.rebake_parts || '[]'), matrix.part) }}
         with:
           name: baked-${{ matrix.part }}
           path: output/part${{ matrix.part }}
           github-token: ${{ github.token }}
           run-id: ${{ inputs.bake_run }}
-      - if: ${{ inputs.bake_run != '' }}
+      - if: ${{ inputs.bake_run != '' && !contains(fromJSON(inputs.rebake_parts || '[]'), matrix.part) }}
         env:
           PART: ${{ matrix.part }}
         run: |

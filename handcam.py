@@ -25,6 +25,15 @@ def progress_bar():
                     MofNCompleteColumn(), TimeElapsedColumn(), TimeRemainingColumn())
 
 
+def clip_frames(start, duration, fps, music_duration):
+    """Allow the final partial audio frame without extending into another frame."""
+    count = math.ceil(duration * fps)
+    audio_end = math.ceil(music_duration * fps) / fps
+    if start + count / fps > audio_end + 1e-9:
+        raise ValueError('Requested clip extends beyond the audio')
+    return count
+
+
 def run_blender(command, log_path, description, total):
     """Keep Blender chatter in the log while displaying its completed work in the terminal."""
     with log_path.open('w', encoding='utf-8') as log, progress_bar() as progress:
@@ -320,10 +329,8 @@ def main(argv=None):
         music_duration = float(probe['format']['duration'])
         if args.full:
             args.start, args.duration = 0., music_duration
-        frame_count = math.ceil(args.duration * args.fps)
+        frame_count = clip_frames(args.start, args.duration, args.fps, music_duration)
         duration = frame_count / args.fps
-        if not args.full and args.start + duration > music_duration + .01:
-            raise ValueError('Requested clip extends beyond the audio')
         chart = load_chart(chart_path.read_text(encoding='utf-8-sig'), source=chart_path)
         from phigros_renderer import background_image, mix_audio, read_info
         from handcam_blender import screen_rect
