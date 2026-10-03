@@ -1,0 +1,156 @@
+"""One selected chart per run: general rules, continuous bake, 1080p60 delivery."""
+import hashlib
+import json
+import math
+import os
+from pathlib import Path
+import shutil
+import subprocess
+import sys
+import zipfile
+
+from task import run, validate
+
+BLENDER = os.environ.get('HANDCAM_BLENDER','/home/runner/blender-headless')
+CHARTS = {
+    'AboutTheUniverse': 'IN',
+    'TrueHomeTrueWorldRework': 'IN',
+    'Implexrough': 'IN',
+    'EntrancetotheChaos': 'IN',
+    'ExoplanetaryMirage': 'AT',
+    'Hate': 'AT',
+}
+
+
+def prepare(key):
+    level = CHARTS[key]
+    source = Path('inputs')/(key+'.zip')
+    run(['gh','release','download','batch-inputs-v1','--pattern',source.name,'--dir','inputs','--clobber'])
+    with zipfile.ZipFile(source) as z, zipfile.ZipFile('inputs/selected.zip','w',zipfile.ZIP_DEFLATED) as target:
+        for name, renamed in [(f'chart_{level}.json','chart.json'),('music.wav','music.wav'),
+                              ('illustration.jpg','illustration.jpg'),('info.yml','info.yml')]:
+            target.writestr(renamed,z.read(name))
+    Path('output').mkdir(exist_ok=True)
+    with zipfile.ZipFile('inputs/selected.zip') as z:
+        Path('inputs/music.wav').write_bytes(z.read('music.wav'))
+    media = json.loads(subprocess.check_output(['ffprobe','-v','error','-show_format','-of','json','inputs/music.wav'],text=True))
+    frames = math.ceil(float(media['format']['duration'])*60)
+    meta = dict(key=key,title='ハテ' if key=='Hate' else key,level=level,frames=frames,duration=frames/60,
+                source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),parts=list(range(math.ceil(frames/1200))))
+    Path('output/batch.json').write_text(json.dumps(meta,indent=2))
+    output = os.environ.get('GITHUB_OUTPUT')
+    if output:
+        with open(output,'a') as f:
+            f.write('parts='+json.dumps(meta['parts'])+'\n')
+    return meta
+
+
+def metadata():
+    return json.loads(Path('output/batch.json').read_text())
+
+
+def common(meta):
+    return [sys.executable,'-u','handcam.py','inputs/selected.zip','--model','inputs/hands.blend',
+        '--resources','inputs/resources.zip','--blender',BLENDER,'--algorithm',5,
+        '--title',meta['title'],'--level',meta['level'],'--width',1920,'--height',1080,'--fps',60]
+
+
+def plan(key):
+    meta = prepare(key)
+    run(common(meta)+['--full','--plan-only','--output','output/base'])
+    run([sys.executable,'-u','general_refinement.py','output/base/motion-plan.json','inputs/selected.zip','output/rules/motion-plan.json'])
+    run([sys.executable,'-u','merge_shared_drags.py','output/rules/motion-plan.json','inputs/selected.zip','output/rules/merged.json'])
+    run([sys.executable,'-u','refine_assignments.py','output/rules/merged.json','output/assigned','--beam',96])
+    run([sys.executable,'-u','spread_contacts.py','output/assigned/assigned-motion-plan.json','inputs/selected.zip','output/rules/spaced.json'])
+    run([sys.executable,'-u','refine_assignments.py','output/rules/spaced.json','output/assigned-final','--beam',96])
+    run([sys.executable,'-u','finalize_refinement.py','output/assigned-final/assigned-motion-plan.json','inputs/selected.zip','output/plan'])
+
+
+def bake():
+    meta = metadata()
+    run(common(meta)+['--psap','output/plan/plan.psap','--motion-plan','output/plan/motion-plan.json',
+        '--start',0,'--duration',meta['duration'],'--bake-only','--output','output/full'])
+    full = Path('output/full')
+    with (full/'handcam.blend').open('rb') as f:
+        digest = hashlib.file_digest(f,'sha256').hexdigest()
+    provenance = dict(commit=os.environ.get('GITHUB_SHA'),workflow_run=os.environ.get('GITHUB_RUN_ID'),
+        blend_sha256=digest,plan_sha256=hashlib.sha256(Path('output/plan/motion-plan.json').read_bytes()).hexdigest(),
+        psap_sha256=hashlib.sha256(Path('output/plan/plan.psap').read_bytes()).hexdigest(),**meta)
+    (full/'provenance.json').write_text(json.dumps(provenance,indent=2))
+
+
+def render(part):
+    from handcam import unpack,prepare_resources,render_screen,render_saved
+    from chart import load_chart
+    from phigros_renderer import background_image,mix_audio
+    meta = metadata()
+    start = part*20
+    frames = min(1200,meta['frames']-part*1200)
+    duration = frames/60
+    out = Path(f'output/part{part}').resolve()
+    run([BLENDER,'--background','--disable-autoexec','output/full/handcam.blend','--python-exit-code',1,
+         '--python','slice_bake.py','--','output/full',out,start,duration])
+    job = json.loads((out/'job.json').read_text())
+    chartpath,music,picture = unpack(Path('inputs/selected.zip'),out/'input')
+    chart = load_chart(chartpath.read_text(encoding='utf-8-sig'),source=chartpath)
+    job.update(resources=str(prepare_resources(Path('inputs/resources.zip'),out/'resources')),
+        background=str(out/'background.png'),screen_video=str(out/'screen.mp4'),mixed_audio=str(out/'audio.wav'))
+    background_image(picture,1920,1080,.2,1080*.045).save(job['background'])
+    renderer = render_screen(chart,picture,out/'screen',job)
+    mix_audio(music,job['resources'],renderer.hits,start,duration,.35,Path(job['mixed_audio']))
+    (out/'job.json').write_text(json.dumps(job,indent=2))
+    render_saved(out,BLENDER)
+    delivery = Path('delivery'); delivery.mkdir(exist_ok=True)
+    shutil.copyfile(out/'handcam.mp4',delivery/f'part{part}.mp4')
+    shutil.copyfile(out/'provenance.json',delivery/f'part{part}-provenance.json')
+    (delivery/f'part{part}-validation.json').write_text(json.dumps(validate(delivery/f'part{part}.mp4',frames),indent=2))
+
+
+def assemble():
+    from handcam import unpack,prepare_resources
+    from chart import load_chart
+    from phigros_renderer import mix_audio
+    meta = metadata()
+    delivery = Path('delivery'); delivery.mkdir(exist_ok=True)
+    chartpath,music,_ = unpack(Path('inputs/selected.zip'),Path('inputs/chart'))
+    chart = load_chart(chartpath.read_text(encoding='utf-8-sig'),source=chartpath)
+    resources = prepare_resources(Path('inputs/resources.zip'),Path('inputs/resources'))
+    hits = sorted((v.note.seconds+chart.offset,int(v.note.type)) for line in chart.lines for v in line.visual_notes if not v.is_fake)
+    audio = mix_audio(music,resources,hits,0.,meta['duration'],.35,delivery/'audio.wav')
+    videos,provenance = [],[]
+    for part in meta['parts']:
+        source = Path('assembled')/f'part{part}.mp4'
+        target = delivery/f'video-{part}.mp4'
+        run(['ffmpeg','-v','error','-y','-i',source,'-map','0:v:0','-c:v','copy','-an',target])
+        videos.append(target)
+        provenance.append(json.loads((Path('assembled')/f'part{part}-provenance.json').read_text()))
+    assert len({p['source_blend_sha256'] for p in provenance})==1
+    assert all(p['max_slice_bone_error_m']<2e-6 for p in provenance)
+    listing = delivery/'concat.txt'
+    listing.write_text(''.join(f"file '{p.name}'\n" for p in videos))
+    target = delivery/f"{meta['key']}-{meta['level']}-1080p60.mp4"
+    run(['ffmpeg','-v','error','-y','-f','concat','-safe',0,'-i',listing,'-i',delivery/'audio.wav',
+        '-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-t',meta['duration'],'-movflags','+faststart',target])
+    media = validate(target,meta['frames'])
+    assert abs(float(next(s for s in media['streams'] if s['codec_type']=='audio')['duration'])-meta['duration'])<.04
+    with target.open('rb') as f:
+        digest = hashlib.file_digest(f,'sha256').hexdigest()
+    report = dict(chart=meta,media=media,sha256=digest,full_decode='passed',audio_mix=audio,
+        shared_continuous_animation=True,provenance=provenance,native_ap_validated=False,
+        contact_validation=json.loads(Path('output/plan/refinement-validation.json').read_text()),
+        pose_diagnostics=json.loads(Path('output/full/diagnostics.json').read_text()))
+    (delivery/'validation.json').write_text(json.dumps(report,indent=2))
+    for source in ('output/plan/motion-plan.json','output/plan/plan.psap','output/rules/general-rules.json'):
+        shutil.copyfile(source,delivery/Path(source).name)
+    for path in [*videos,listing,delivery/'audio.wav']:
+        path.unlink()
+    print('BATCH_DELIVERY',target,digest,flush=True)
+
+
+if __name__=='__main__':
+    stage = sys.argv[1]
+    if stage=='plan': plan(sys.argv[2])
+    elif stage=='bake': bake()
+    elif stage=='render': render(int(sys.argv[2]))
+    elif stage=='assemble': assemble()
+    else: raise ValueError(stage)

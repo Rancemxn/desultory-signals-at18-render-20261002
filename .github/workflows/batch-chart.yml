@@ -1,0 +1,121 @@
+name: General chart 1080p60
+run-name: ${{ inputs.chart }} general 1080p60
+on:
+  workflow_dispatch:
+    inputs:
+      chart:
+        required: true
+        type: choice
+        options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate]
+permissions:
+  contents: write
+concurrency:
+  group: sequential-general-charts
+  cancel-in-progress: false
+jobs:
+  bake:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 350
+    outputs:
+      parts: ${{ steps.plan.outputs.parts }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - id: plan
+        env:
+          CHART: ${{ inputs.chart }}
+          GH_TOKEN: ${{ github.token }}
+        run: python -u batch_task.py plan "$CHART"
+      - run: python -u batch_task.py bake
+      - uses: actions/upload-artifact@v4
+        with:
+          name: continuous-bake
+          path: |
+            output/batch.json
+            output/full/handcam.blend
+            output/full/job.json
+            output/full/rig.json
+            output/full/diagnostics.json
+            output/full/provenance.json
+          compression-level: 1
+          retention-days: 3
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: planning
+          path: |
+            output/batch.json
+            output/plan/
+            output/rules/
+            output/assigned*/
+            output/base/*.json
+            output/base/*.log
+            output/full/*.log
+          retention-days: 7
+      - uses: actions/upload-artifact@v4
+        with:
+          name: selected-chart
+          path: inputs/selected.zip
+          compression-level: 0
+          retention-days: 3
+  render:
+    needs: bake
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        part: ${{ fromJSON(needs.bake.outputs.parts) }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: continuous-bake
+          path: output
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-chart
+          path: inputs
+      - run: python -u batch_task.py render ${{ matrix.part }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: rendered-${{ matrix.part }}
+          path: delivery/
+          retention-days: 3
+  assemble:
+    needs: render
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: rendered-*
+          merge-multiple: true
+          path: assembled
+      - uses: actions/download-artifact@v4
+        with:
+          name: planning
+          path: output
+      - uses: actions/download-artifact@v4
+        with:
+          name: continuous-bake
+          path: output
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-chart
+          path: inputs
+      - run: python -u batch_task.py assemble
+      - uses: actions/upload-artifact@v4
+        with:
+          name: final-delivery
+          path: delivery/
+          compression-level: 0
+          retention-days: 14
+      - env:
+          GH_TOKEN: ${{ github.token }}
+          CHART: ${{ inputs.chart }}
+        run: gh release create "general-$CHART-${{ github.run_id }}" delivery/* --title "$CHART — 1080p60" --notes "General chart rules; full continuous hand animation; 1920x1080 at 60 FPS. See validation.json for geometry and pose diagnostics."
