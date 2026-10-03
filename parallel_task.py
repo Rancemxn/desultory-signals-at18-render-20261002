@@ -1,8 +1,11 @@
 """Eight independent bakes with numerical same-time join verification."""
 import bisect
+import hashlib
 import json
 import math
 from pathlib import Path
+import re
+import subprocess
 import sys
 
 import refined_task
@@ -63,6 +66,56 @@ def seam_distance(before,after):
     return worst
 
 
+def solver_tree(commit):
+    """Compare the actual solver/runtime sources when recovering individual parts."""
+    if not re.fullmatch(r'[0-9a-f]{40,64}',commit):
+        raise ValueError('Invalid bake commit')
+    files = ('handcam_blender.py','handcam_motion.py','handcam_avoidance.py',
+             'capture_bake_boundaries.py','inspect_pose_numeric.py','batch_task.py',
+             '.github/actions/runtime/action.yml')
+    listing = subprocess.check_output(['git','ls-tree','-r',commit,'--',*files],
+        cwd=Path(__file__).resolve().parent,text=True)
+    result = {}
+    for row in listing.splitlines():
+        metadata,path = row.split('\t',1)
+        result[path] = metadata.split()[2]
+    if set(result)!=set(files):
+        raise ValueError('Bake solver sources are missing from git history')
+    return result
+
+
+def bake_compatibility(paths,provenance):
+    commits = sorted({p['commit'] for p in provenance})
+    if len(commits)==1:
+        return dict(basis='same commit',commits=commits)
+    trees = [solver_tree(commit) for commit in commits]
+    if any(tree!=trees[0] for tree in trees):
+        raise ValueError('Recovered bakes use different solver or runtime sources')
+    if len({p['psap_sha256'] for p in provenance})!=1:
+        raise ValueError('Recovered bakes use different PSAP contacts')
+    if any(not p.get('full_contact_context') or p.get('initialization_time')!=-1. for p in provenance):
+        raise ValueError('Recovered bakes must share their full initialization history')
+    jobs = [json.loads(p.with_name('job.json').read_text()) for p in paths]
+    # These fields vary with the clip or point at per-part copies of media.
+    per_part = {'start','duration','frames','warmup','output','resources','illustration','background','audio'}
+    common = [{k:v for k,v in job.items() if k not in per_part} for job in jobs]
+    if any(job!=common[0] for job in common):
+        raise ValueError('Recovered bakes have different motion inputs or parameters')
+    for job,p in zip(jobs,provenance):
+        if (job['start']!=p['start'] or job['frames']!=p['frames']
+                or abs(job['warmup']-job['start']-1.)>1e-9):
+            raise ValueError('Recovered bake interval or initialization history differs')
+    if any(abs(a['start']+a['duration']-b['start'])>1e-9 for a,b in zip(jobs,jobs[1:])):
+        raise ValueError('Recovered bake intervals do not join')
+    rigs = [json.loads(p.with_name('rig.json').read_text()) for p in paths]
+    if any(rig!=rigs[0] for rig in rigs):
+        raise ValueError('Recovered bakes use different rig calibration')
+    def digest(value):
+        return hashlib.sha256(json.dumps(value,sort_keys=True,separators=(',',':')).encode()).hexdigest()
+    return dict(basis='identical solver/runtime, motion inputs and rig calibration',commits=commits,
+                solver_tree=trees[0],motion_inputs_sha256=digest(common[0]),rig_sha256=digest(rigs[0]))
+
+
 def audit(source):
     paths = sorted(Path(source).rglob('seam-state.json'),key=lambda p:
                    json.loads(p.with_name('provenance.json').read_text())['part'])
@@ -70,12 +123,12 @@ def audit(source):
     provenance = [json.loads(p.with_name('provenance.json').read_text()) for p in paths]
     assert [p['part'] for p in provenance]==list(range(8))
     assert len({p['plan_sha256'] for p in provenance})==1
-    assert len({p['commit'] for p in provenance})==1
+    compatibility = bake_compatibility(paths,provenance)
     states = [json.loads(p.read_text()) for p in paths]
     seams = [dict(time=a['join']['time'],**seam_distance(a['join'],b['first'])) for a,b in zip(states,states[1:])]
     report = dict(passed=all(s['distance_mm']<=1. for s in seams),tolerance_mm=1.,
                   comparison='same-time world-space heads and tails of all rig bones',seams=seams,
-                  bakes=provenance,image_inspection=False)
+                  bakes=provenance,compatibility=compatibility,image_inspection=False)
     out = Path('output/full');out.mkdir(parents=True,exist_ok=True)
     (out/'seam-validation.json').write_text(json.dumps(report,indent=2))
     diagnostics = [json.loads(p.with_name('diagnostics.json').read_text()) for p in paths]
