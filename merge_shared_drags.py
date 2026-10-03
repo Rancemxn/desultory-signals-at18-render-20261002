@@ -32,6 +32,7 @@ def main():
         distance,owner=min(choices,key=lambda x:x[0])
         changes.append(dict(drag=c['note_ids'],owner=list(owner['note_ids']),time=c['start'],distance_mm=distance*1000))
         owner['note_ids']=sorted(set(owner['note_ids'])|set(c['note_ids']))
+        owner['judgement_times']={**owner.get('judgement_times',{}),**c.get('judgement_times',{})}
         owner['joint_note_coverage']=True
         contacts.remove(c)
     plan['contacts']=sorted(contacts,key=lambda c:(c['start'],c['pointer']))

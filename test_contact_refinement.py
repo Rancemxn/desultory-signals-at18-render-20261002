@@ -23,6 +23,29 @@ def fixture(kind, centers, seconds, duration=0.):
 
 
 class RefinementTests(unittest.TestCase):
+    def test_point_query_matches_full_boolean_geometry(self):
+        import random
+        from shapely.geometry import Point
+        from test_block_area import area
+        chart,_=fixture(NoteType.HOLD,[8.],[1.],2.)
+        blocks=[]
+        randomizer=random.Random(71)
+        for i in range(18):
+            x,y=randomizer.uniform(-.2,.9),randomizer.uniform(-.2,.9)
+            b=area((x,y),(x+.22,y+.24))
+            b['isSubtract']=i%3==0
+            b['rotateEvents']=[dict(time=0.,rotation=i*23.,anchor=dict(x=.5,y=.5),easeType=0)]
+            blocks.append(b)
+        chart.block_areas=BlockAreas(blocks)
+        g=ContactGeometry(chart,extra_clearance_m=.004)
+        contact=dict(kind='drag',note_ids=[0],start=1.,end=3.)
+        for clearance in (0.,.004,.013):
+            contact['block_clearance_m']=clearance
+            full=g.zone(contact,1.5).buffer(1e-9)
+            for _ in range(300):
+                point=(randomizer.uniform(-.05,1.05),randomizer.uniform(-.05,1.05))
+                self.assertEqual(g.allows_point(contact,1.5,point),full.covers(Point(*point)))
+
     def test_hold_keeps_a_legal_point_when_line_moves(self):
         chart,line = fixture(NoteType.HOLD,[8.],[0.],1.)
         line.pos = lambda t,offset: offset + .45*math.sin(t*6)*1.0 + 4.5j

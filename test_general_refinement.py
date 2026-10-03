@@ -6,6 +6,79 @@ from contact_refinement import ContactGeometry, validate_contact
 
 
 class GeneralRulesTests(unittest.TestCase):
+    def test_discontinuous_hold_keeps_both_original_bands_covered(self):
+        from types import SimpleNamespace
+        from general_refinement import collective_hold
+        from shapely.geometry import Point
+        chart,line=fixture(NoteType.HOLD,[8.],[2.],.12)
+        class Vertical:
+            def __matmul__(self,t):return __import__('math').pi/2
+        line.angle=Vertical()
+        line.pos=lambda t,offset: complex(8,2 if int((t-2)*1000)%20<10 else 7)
+        contact=dict(kind='hold',note_ids=[0],start=2.,end=2.12,points=[[2.,.5,2/9],[2.119,.5,7/9]])
+        geometry=ContactGeometry(chart)
+        contacts=collective_hold(geometry,contact,2)
+        self.assertEqual(len(contacts),2)
+        for t in geometry.times(contact,.001):
+            zone=geometry.zone(contact,float(t))
+            self.assertTrue(any(zone.covers(Point(*c['points'][0][1:])) for c in contacts))
+        with self.assertRaises(ValueError):collective_hold(geometry,contact,1)
+
+    def test_invisible_drag_can_be_hit_immediately_before_line_cut(self):
+        from algo.algo5 import Planner,Settings
+        from handcam_motion import default_profile
+        chart,line=fixture(NoteType.DRAG,[8.],[2.])
+        line.pos=lambda t,offset: complex(8,4.5) if t<2 else complex(80,45)
+        contacts=Planner(chart,Settings(fingers=('index',)),default_profile()).run()
+        self.assertEqual(len(contacts),1)
+        c=contacts[0]
+        self.assertLess(c['judgement_times']['0'],2.)
+        self.assertLessEqual(2.-c['judgement_times']['0'],.0155)
+        self.assertFalse(validate_contact(ContactGeometry(chart),c,c['points']))
+
+    def test_hold_tail_flick_uses_the_existing_index(self):
+        from types import SimpleNamespace
+        from algo.algo5 import Planner,Settings
+        from handcam_motion import default_profile
+        chart,line=fixture(NoteType.HOLD,[4.,12.],[2.,2.],.5)
+        line.notes.extend(SimpleNamespace(type=NoteType.FLICK,seconds=2.5,hold=0.,offset=complex(x,0))
+                          for x in (4.,12.))
+        contacts=Planner(chart,Settings(fingers=('index',)),default_profile()).run()
+        self.assertEqual(len(contacts),2)
+        self.assertEqual({n for c in contacts for n in c['note_ids']},{0,1,2,3})
+        for c in contacts:
+            self.assertFalse(validate_contact(ContactGeometry(chart),c,c['points']))
+
+    def test_two_index_fingers_share_simultaneous_flick_hold_pairs(self):
+        from types import SimpleNamespace
+        from algo.algo5 import Planner,Settings
+        from handcam_motion import default_profile
+        chart,line=fixture(NoteType.FLICK,[4.,12.],[2.,2.])
+        line.notes.extend(SimpleNamespace(type=NoteType.HOLD,seconds=2.,hold=.15,offset=complex(x,0))
+                          for x in (4.,12.))
+        contacts=Planner(chart,Settings(fingers=('index',)),default_profile()).run()
+        self.assertEqual(len(contacts),2)
+        self.assertEqual({n for c in contacts for n in c['note_ids']},{0,1,2,3})
+        self.assertEqual({(c['hand'],c['finger']) for c in contacts},{('left','index'),('right','index')})
+        g=ContactGeometry(chart,extra_clearance_m=.004)
+        for c in contacts:
+            self.assertFalse(validate_contact(g,c,c['points']))
+            swipe=[p for p in c['points'] if p[0]<=2.045]
+            self.assertGreaterEqual(__import__('math').dist(swipe[0][1:],swipe[-1][1:]),.10)
+
+    def test_busy_tap_contacts_can_cover_following_drags(self):
+        from types import SimpleNamespace
+        from algo.algo5 import Planner,Settings
+        from handcam_motion import default_profile
+        chart,line=fixture(NoteType.TAP,[4.,12.],[2.,2.])
+        line.notes.extend(SimpleNamespace(type=NoteType.DRAG,seconds=t,hold=0.,offset=complex(x,0))
+                          for x,t in ((4.,2.018),(12.,2.036)))
+        contacts=Planner(chart,Settings(fingers=('index',)),default_profile()).run()
+        self.assertEqual(len(contacts),2)
+        self.assertEqual({n for c in contacts for n in c['note_ids']},{0,1,2,3})
+        for c in contacts:
+            self.assertFalse(validate_contact(ContactGeometry(chart),c,c['points']))
+
     def test_terminal_hold_release_is_limited_to_twenty_milliseconds(self):
         from algo.algo5 import Planner,Settings,State
         from handcam_motion import default_profile

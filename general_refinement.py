@@ -9,6 +9,8 @@ import zipfile
 from chart import load_chart
 from contact_refinement import ContactGeometry, refine_contact, route_contact, validate_contact
 from handcam_motion import point_at
+from shapely.geometry import Point
+from contact_refinement import project
 
 
 def legal_path(g, contact, screen):
@@ -72,6 +74,60 @@ def relay(contact, screen):
     return result
 
 
+def collective_hold(g, contact, max_contacts):
+    """Cover discontinuous Hold bands with several stationary, legal contacts.
+
+    Each contact remains clear of blocks for its complete lifetime. The
+    final coverage audit still requires a real fingertip in the original
+    Hold band at every checked instant; the band is never widened.
+    """
+    if contact['kind']!='hold':
+        raise ValueError('Only Hold contacts support collective coverage')
+    times=set(g.times(contact,.001))
+    for nid in contact['note_ids']:
+        note=g.notes[nid][1]
+        times.update(note.seconds+i*.001 for i in range(math.ceil(note.hold/.001))
+                     if contact['start']<=note.seconds+i*.001<contact['end'])
+    times.add(contact['end']-1e-7)
+    times=sorted(times)
+    safe=g.screen
+    if g.chart.block_areas:
+        unowned=dict(contact,note_ids=[],kind='drag')
+        for t in times:
+            safe=safe.intersection(g.zone(unowned,float(t)))
+            if safe.is_empty:
+                raise ValueError('No stationary block-free region for collective Hold')
+    regions=[]
+    for t in times:
+        zone=g.zone(contact,float(t)).intersection(safe)
+        if zone.is_empty:
+            raise ValueError('Hold has an empty judgement band')
+        options=[(i,r.intersection(zone)) for i,r in enumerate(regions)]
+        options=[(i,r) for i,r in options if not r.buffer(-2e-5).is_empty]
+        if options:
+            i,region=max(options,key=lambda pair:pair[1].area)
+            regions[i]=region
+        else:
+            regions.append(zone)
+            if len(regions)>max_contacts:
+                raise ValueError('Collective Hold exceeds the enabled finger count')
+    result=[]
+    origin=point_at(contact['points'],contact['start'])
+    for region in regions:
+        xy=project(region.buffer(-2e-5),origin)
+        c=copy.deepcopy(contact)
+        c.update(collective_hold=True,rule='discontinuous_hold_coverage',
+                 points=[[contact['start'],*xy],[round(contact['end']-.001,3),*xy]])
+        if validate_contact(g,c,c['points']):
+            raise ValueError('Collective contact crosses a blocked region')
+        result.append(c)
+    for t in times:
+        zone=g.zone(contact,float(t)).buffer(1e-9)
+        if not any(zone.covers(Point(*c['points'][0][1:])) for c in result):
+            raise ValueError('Collective contacts leave a Hold coverage gap')
+    return result
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('source',type=Path)
@@ -90,8 +146,13 @@ def main():
         for key in ('fixed_finger','manual_hand','manual_role','refinement_region','refinement_start','refinement_end'):
             c.pop(key,None)
         original = copy.deepcopy(c['points'])
-        c['points'] = legal_path(g,c,screen)
-        pieces = relay(c,screen)
+        try:
+            c['points'] = legal_path(g,c,screen)
+            pieces = relay(c,screen)
+        except ValueError:
+            if c['kind']!='hold':
+                raise
+            pieces=collective_hold(g,c,2*len(plan['settings']['fingers']))
         for piece in pieces:
             piece['points'] = legal_path(g,piece,screen)
         contacts.extend(pieces)

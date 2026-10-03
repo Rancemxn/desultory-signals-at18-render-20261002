@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import dataclass
+import copy
 import cmath
 import hashlib
 import math
@@ -15,7 +16,7 @@ import time
 from shapely.geometry import Point, box
 from shapely.ops import nearest_points
 
-from basis import NoteType
+from basis import Note, NoteType
 from .algo4 import JudgeArea, JUDGE_HALF_TAP, JUDGE_HALF_DRAG
 from .base import ScreenUtil, TouchAction, VirtualTouchEvent, dump_data
 from handcam_motion import (FINGER_ORDER, VERSION, default_profile, finish_motion,
@@ -121,6 +122,8 @@ class Planner:
         self.zones, self.paths = {}, {}
         self.corridor_paths = {}
         self.terminal_paths = {}
+        self.judgement_times = {}
+        self.shared_paths = {}
         self.rejected = Counter()
         self.tasks = []
         for line in chart.lines:
@@ -134,6 +137,20 @@ class Planner:
                 end = round((note.seconds + note.hold) * 1000) if note.type == NoteType.HOLD else (
                     beat + 45 if note.type == NoteType.FLICK else beat + 70)
                 self.tasks.append(Task(len(self.tasks), note, line, start, max(start + 1, end), beat))
+        for i,task in enumerate(self.tasks):
+            if task.note.type != NoteType.DRAG or not self.zone(task,task.start).is_empty:
+                continue
+            # The existing algo4 timing search permits 15 ms around an
+            # invisible judgement instant. Keep the rendered chart untouched.
+            for delta in (d*s for d in range(1,16) for s in (-1,1)):
+                beat=task.beat+delta
+                shifted=Note(task.note.type,beat/1000,task.note.hold,task.note.offset)
+                candidate=Task(task.id,shifted,task.line,beat,beat+70,beat)
+                if not self.zone(candidate,beat).is_empty:
+                    self.tasks[i]=candidate
+                    self.judgement_times[task.id]=shifted.seconds
+                    self.zones={key:value for key,value in self.zones.items() if key[0]!=task.id}
+                    break
         self.tasks.sort(key=lambda n: (n.start, n.id))
 
     def target_time(self, task, ms):
@@ -142,7 +159,7 @@ class Planner:
         if task.note.type == NoteType.HOLD:
             return max(task.note.seconds, min(ms / 1000, task.note.seconds + task.note.hold - .001))
         if task.note.type == NoteType.DRAG:
-            return max(task.note.seconds, ms / 1000)
+            return task.note.seconds if task.id in self.judgement_times else max(task.note.seconds,ms/1000)
         return task.note.seconds
 
     def zone(self, task, ms):
@@ -362,6 +379,8 @@ class Planner:
             points.append([ms/1000,center.real/self.screen.width,center.imag/self.screen.height])
         contact = dict(kind=task.note.type.name.lower(),note_ids=[task.id],start=task.start/1000,
                        end=(end+1)/1000,beat=task.beat/1000,points=points)
+        if task.id in self.judgement_times:
+            contact['judgement_times']={str(task.id):self.judgement_times[task.id]}
         result = None
         extra = set()
         for solver in (refine_contact,route_contact):
@@ -444,6 +463,8 @@ class Planner:
                                   beat=task.beat / 1000, burst_cost=burst_cost,
                                   effort=.018 if task.note.type == NoteType.DRAG else .055,
                                   planned=True)
+                    if task.id in self.judgement_times:
+                        record['judgement_times']={str(task.id):self.judgement_times[task.id]}
                     if effective_end != end:
                         record['terminal_hold_release_ms'] = (task.note.seconds+task.note.hold-record['end'])*1000
                         record['terminal_hold_release_reason'] = 'empty legal zone within final 20 ms'
@@ -505,10 +526,16 @@ class Planner:
             for state in beam:
                 for cost, record in self.choices(task, state):
                     expanded.append(State((*state.contacts, record), state.score + cost))
+                expanded.extend(self.share_hold(task,state))
             if not expanded and self.settings.allow_degraded:
                 for state in beam:
                     for cost, record in self.choices(task, state, degraded=True):
                         expanded.append(State((*state.contacts, record), state.score + cost))
+            if not expanded:
+                for state in beam:
+                    expanded.extend(self.share_flick_hold(task,state))
+                    expanded.extend(self.share_drag(task,state))
+                    expanded.extend(self.flick_on_hold(task,state))
             if not expanded:
                 raise PlanningError(f'No feasible handcam fingering for note {task.id} at {task.beat / 1000:.3f}s; '
                                     f'rejections: {dict(self.rejected)}')
@@ -527,6 +554,148 @@ class Planner:
                 console.print(f'algo5: {index + 1}/{len(self.tasks)} notes, {len(beam)} candidates')
         return list(min(beam, key=lambda n: n.score).contacts)
 
+    def share_flick_hold(self, task, state):
+        """A same-beat Hold may continue a Flick's already pressed fingertip.
+
+        Preserve the swipe and validate the intersection of both judgement
+        bands. This never allocates an extra finger or skips either note.
+        """
+        if task.note.type != NoteType.HOLD:
+            return []
+        from contact_refinement import ContactGeometry,refine_contact,validate_contact
+        geometry = ContactGeometry(self.chart,physical_screen=self.physical,extra_clearance_m=.004)
+        result = []
+        for index,old in enumerate(state.contacts):
+            if old['kind']!='flick' or abs(old['beat']-task.beat/1000)>.0011 or old['end']<=task.start/1000:
+                continue
+            if any(geometry.notes[n][1].type==NoteType.HOLD for n in old['note_ids']):
+                continue
+            seed = self.project(self.zone(task,task.start),
+                                (old['points'][-1][1]*self.screen.width,old['points'][-1][2]*self.screen.height))
+            if seed is None:
+                continue
+            tail = self.path(task,seed,task.end)
+            if tail is None:
+                tail = self.corridor_path(task,task.end)
+            if tail is None:
+                continue
+            merged = copy.deepcopy(old)
+            merged.update(note_ids=[*old['note_ids'],task.id],end=max(old['end'],(task.end+1)/1000),
+                          joint_note_coverage=True,shared_contact='same_beat_flick_hold')
+            merged['points'] = old['points']+[p for p in tail if p[0]>old['points'][-1][0]]
+            points,_ = refine_contact(geometry,merged)
+            if points is None or validate_contact(geometry,merged,points):
+                continue
+            if self.blocks.path_violations(points,merged['start'],merged['end']):
+                continue
+            merged['points'] = points
+            contacts = list(state.contacts)
+            contacts[index] = merged
+            result.append(State(tuple(contacts),state.score))
+        return result
+
+    def share_hold(self, task, state):
+        """Coincident Hold heads can share the intersection of their full paths."""
+        if task.note.type != NoteType.HOLD:
+            return []
+        from contact_refinement import ContactGeometry,refine_contact,validate_contact
+        geometry=ContactGeometry(self.chart,physical_screen=self.physical,extra_clearance_m=.004)
+        result=[]
+        for index,old in enumerate(state.contacts):
+            if old['kind']!='hold' or abs(old['beat']-task.beat/1000)>.0011:
+                continue
+            merged=copy.deepcopy(old)
+            merged.update(note_ids=[*old['note_ids'],task.id],end=max(old['end'],(task.end+1)/1000),
+                          joint_note_coverage=True,shared_contact='intersecting_hold_bands')
+            if geometry.zone(merged,task.note.seconds).is_empty:
+                continue
+            if merged['end']>old['end']:
+                merged['points'].append([merged['end']-.001,*old['points'][-1][1:]])
+            cache_key=('hold',tuple(sorted(merged['note_ids'])),merged['start'],merged['end'])
+            if cache_key not in self.shared_paths:
+                points,_=refine_contact(geometry,merged,iterations=60)
+                if points is not None and (validate_contact(geometry,merged,points) or
+                        self.blocks.path_violations(points,merged['start'],merged['end'])):
+                    points=None
+                self.shared_paths[cache_key]=points
+            points=self.shared_paths[cache_key]
+            if points is None:
+                continue
+            merged['points']=points
+            contacts=list(state.contacts);contacts[index]=merged
+            result.append(State(tuple(contacts),state.score))
+        return result
+
+    def share_drag(self, task, state):
+        """Keep an occupied touch down when it can also cover the next Drag."""
+        if task.note.type != NoteType.DRAG:
+            return []
+        from contact_refinement import ContactGeometry,refine_contact,validate_contact
+        geometry = ContactGeometry(self.chart,physical_screen=self.physical,extra_clearance_m=.004)
+        result = []
+        for index,old in enumerate(state.contacts):
+            if not old['start'] <= task.beat/1000 < old['end']:
+                continue
+            merged = copy.deepcopy(old)
+            merged.update(note_ids=[*old['note_ids'],task.id],joint_note_coverage=True,
+                          end=max(old['end'],(task.beat+12)/1000),shared_contact='covered_drag')
+            if task.id in self.judgement_times:
+                merged.setdefault('judgement_times',{})[str(task.id)]=self.judgement_times[task.id]
+            if old['kind']=='tap':
+                merged['kind']='drag'
+            if merged['end']>old['end']:
+                merged['points'].append([merged['end']-.001,*old['points'][-1][1:]])
+            extra = set()
+            for attempt in range(3):
+                points,_ = refine_contact(geometry,merged,extra_times=extra)
+                if points is None:
+                    break
+                bad = validate_contact(geometry,merged,points,limit=100)
+                if not bad and not self.blocks.path_violations(points,merged['start'],merged['end']):
+                    merged['points']=points
+                    contacts=list(state.contacts);contacts[index]=merged
+                    result.append(State(tuple(contacts),state.score))
+                    break
+                extra.update(bad)
+        return result
+
+    def flick_on_hold(self, task, state):
+        """Slide a held fingertip for a Flick while retaining the Hold's band."""
+        if task.note.type != NoteType.FLICK:
+            return []
+        from contact_refinement import ContactGeometry,refine_contact,validate_contact
+        geometry=ContactGeometry(self.chart,physical_screen=self.physical,extra_clearance_m=.004)
+        result=[]
+        for index,old in enumerate(state.contacts):
+            if not old['start']<=task.start/1000<old['end']:
+                continue
+            if not any(geometry.notes[n][1].type==NoteType.HOLD for n in old['note_ids']):
+                continue
+            side=-1 if old['hand']=='left' else 1
+            for seed in self.seeds(task,state,side,old['finger']):
+                for direction in (1,-1,2,-2):
+                    stroke=self.path(task,seed,task.end,direction)
+                    if stroke is None:
+                        continue
+                    merged=copy.deepcopy(old)
+                    merged.update(note_ids=[*old['note_ids'],task.id],kind='flick',beat=task.beat/1000,
+                                  end=max(old['end'],(task.end+1)/1000),joint_note_coverage=True,
+                                  shared_contact='flick_during_hold')
+                    merged['points']=([p for p in old['points'] if p[0]<stroke[0][0]]+stroke+
+                                      [p for p in old['points'] if p[0]>stroke[-1][0]])
+                    points,_=refine_contact(geometry,merged)
+                    if points is None or validate_contact(geometry,merged,points):
+                        continue
+                    if self.blocks.path_violations(points,merged['start'],merged['end']):
+                        continue
+                    merged['points']=points
+                    contacts=list(state.contacts);contacts[index]=merged
+                    result.append(State(tuple(contacts),state.score))
+                    break
+                if result:
+                    break
+        return result
+
     def join_drags(self, contacts):
         """Keep safe short Drag chains down; validate the newly occupied connecting interval."""
         result, last = [], {}
@@ -538,6 +707,7 @@ class Planner:
                     and 0 < c['start'] - previous['end'] <= .14):
                 merged = dict(previous, end=c['end'], points=previous['points'] + c['points'],
                               note_ids=previous['note_ids'] + c['note_ids'],
+                              judgement_times={**previous.get('judgement_times',{}),**c.get('judgement_times',{})},
                               effort=previous['effort'] + c['effort'])
                 others = tuple(other for other in contacts if other is not c and other is not previous
                                and not set(other['note_ids']).intersection(merged['note_ids'])

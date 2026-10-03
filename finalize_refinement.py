@@ -68,7 +68,17 @@ def main():
     coverage_failures = []
     for nid,(line,note) in notes.items():
         assigned = [c for c in contacts if nid in c['note_ids']]
-        times = [note.seconds]
+        judgements = {geometry.judgement_time(c,nid) for c in assigned}
+        if len(judgements)!=1:
+            raise ValueError('Inconsistent judgement time for note '+str(nid))
+        judgement = judgements.pop()
+        if judgement!=note.seconds:
+            if note.type!=NoteType.DRAG or abs(judgement-note.seconds)>.0155001:
+                raise ValueError('Invalid judgement timing adjustment')
+            original = dict(kind='drag',note_ids=[nid],start=note.seconds,end=note.seconds+.012)
+            if not geometry.zone(original,note.seconds,central=False).is_empty:
+                raise ValueError('Timing adjustment requires an originally invisible judgement')
+        times = [judgement]
         if note.type==NoteType.HOLD:
             times += [note.seconds+i*.001 for i in range(1,math.ceil(note.hold/.001))]
         half = JUDGE_HALF_DRAG if note.type in (NoteType.DRAG,NoteType.FLICK) else JUDGE_HALF_TAP
@@ -79,7 +89,7 @@ def main():
                           and 0 <= note.seconds+note.hold-c['end'] <= .0200001]
                 if terminal and t>=max(c['end'] for c in terminal):
                     continue
-            when = max(note.seconds,min(t,note.seconds+note.hold-.001)) if note.type==NoteType.HOLD else note.seconds
+            when = max(note.seconds,min(t,note.seconds+note.hold-.001)) if note.type==NoteType.HOLD else judgement
             center,angle = line.pos(when,note.offset),line.angle@when
             covered = False
             for c in assigned:
@@ -97,6 +107,10 @@ def main():
     report = dict(notes=len(notes),contacts=len(contacts),allowed_fingers=sorted(allowed),
         used_fingers=sorted({(c['hand'],c['finger']) for c in contacts}),
         boundary_mode='aligned',tap_width_ratio=.5,hold_width_ratio=.5,drag_width_ratio=.3,
+        judgement_time_adjustments=[dict(note=nid,seconds=t,offset_ms=(t-notes[int(nid)][1].seconds)*1000)
+                                   for c in contacts for nid,t in c.get('judgement_times',{}).items()],
+        collective_hold_contacts=[dict(notes=c['note_ids'],start=c['start'],end=c['end'],hand=c['hand'],finger=c['finger'])
+                                  for c in contacts if c.get('collective_hold')],
         terminal_hold_releases=[dict(notes=c['note_ids'],end=c['end'],early_ms=c['terminal_hold_release_ms'],
                                     reason=c['terminal_hold_release_reason'])
                                 for c in contacts if 'terminal_hold_release_ms' in c],

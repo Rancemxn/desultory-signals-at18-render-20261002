@@ -45,7 +45,11 @@ class ContactGeometry:
 
     @lru_cache(maxsize=32768)
     def blocked(self, t, extra_clearance_m=None):
-        raw = self.normalized(compose(self.chart.block_areas.active(t)))
+        return self.blocked_rectangles(self.chart.block_areas.active(t),extra_clearance_m)
+
+    @lru_cache(maxsize=8192)
+    def blocked_rectangles(self, rectangles, extra_clearance_m=None):
+        raw = self.normalized(compose(rectangles))
         # Shapely approximates circular buffers with an inscribed polygon. Inflate
         # by the secant of half an arc step to keep the bound conservative.
         radius = self.display_margin / math.cos(math.pi / 64)
@@ -62,23 +66,31 @@ class ContactGeometry:
                             xfact=1/w, yfact=1/h, origin=(0,0))
         return guarded
 
-    def strip(self, line, note, t, ratio):
-        when = max(note.seconds, min(t, note.seconds+note.hold-.001)) if note.type == NoteType.HOLD else note.seconds
+    def judgement_time(self,contact,nid):
+        return contact.get('judgement_times',{}).get(str(nid),self.notes[nid][1].seconds)
+
+    def strip(self, line, note, t, ratio, judgement_time=None):
+        when = max(note.seconds, min(t, note.seconds+note.hold-.001)) if note.type == NoteType.HOLD else (
+            note.seconds if judgement_time is None else judgement_time)
         half = JUDGE_HALF_DRAG if note.type in (NoteType.DRAG, NoteType.FLICK) else JUDGE_HALF_TAP
         return self.normalized(JudgeArea(line.pos(when, note.offset),
             cmath.exp(1j*(line.angle@when)), self.chart.width, self.chart.height, half, ratio).poly)
 
-    def zone(self, contact, t, *, central=True):
+    def zone(self, contact, t, *, central=True, include_blocks=True):
         joint=contact.get('joint_note_coverage') or any(
             w['start']<=t<w['end'] for w in contact.get('joint_note_windows',()))
-        owner = [self.notes[nid] for nid in contact['note_ids']]
-        holds = [(line,n) for line,n in owner if n.type == NoteType.HOLD and
+        owner = [(*self.notes[nid],self.judgement_time(contact,nid)) for nid in contact['note_ids']]
+        if contact.get('collective_hold'):
+            if not owner or any(n.type!=NoteType.HOLD for _,n,_ in owner):
+                raise ValueError('Collective coverage is only valid for Hold notes')
+            owner=[]
+        holds = [(line,n,beat) for line,n,beat in owner if n.type == NoteType.HOLD and
                  n.seconds-.0011 <= t <= n.seconds+n.hold+.0011]
-        required = holds or [(line,n) for line,n in owner if abs(t-n.seconds) <= .0011 or
-                            n.seconds <= t <= n.seconds+.010]
+        required = holds or [(line,n,beat) for line,n,beat in owner if abs(t-beat) <= .0011 or
+                            beat <= t <= beat+.010]
         if joint:
-            required = holds + [(line,n) for line,n in owner if n.type!=NoteType.HOLD and
-                (abs(t-n.seconds)<=.0011 or n.seconds<=t<=n.seconds+.010)]
+            required = holds + [(line,n,beat) for line,n,beat in owner if n.type!=NoteType.HOLD and
+                (abs(t-beat)<=.0011 or beat<=t<=beat+.010)]
         # A connected Drag phrase is free to travel BETWEEN judgement windows.
         # Switching the nearest note's strip at its temporal midpoint creates
         # spurious discontinuities, even while the actual note geometry is static.
@@ -89,21 +101,51 @@ class ContactGeometry:
             zone = zone.intersection(box(*contact['refinement_region']))
         if required:
             strips = [self.strip(line, n, t, (.5 if n.type in (NoteType.HOLD, NoteType.TAP) else
-                      .3 if n.type == NoteType.DRAG else .85) if central else .85)
-                      for line,n in required]
+                      .3 if n.type == NoteType.DRAG else .85) if central else .85,beat)
+                      for line,n,beat in required]
             if joint:
                 for strip in strips:
                     zone = zone.intersection(strip)
             else:
                 zone = zone.intersection(unary_union(strips))
-        return zone.difference(self.blocked(t, contact.get('block_clearance_m')))
+        if include_blocks and self.chart.block_areas:
+            blocked=self.blocked(t,contact.get('block_clearance_m'))
+            if not blocked.is_empty:
+                zone=zone.difference(blocked)
+        return zone
+
+    def allows_point(self, contact, t, xy):
+        """Evaluate the same guarded geometry using only blocks near this point.
+
+        Boolean operations and both buffers are local within their summed
+        radii. A rectangle outside this expanded bounding box cannot affect
+        the result, including subtract/XOR regions.
+        """
+        point=Point(*xy)
+        if not self.zone(contact,t,include_blocks=False).buffer(1e-9).covers(point):
+            return False
+        clearance=contact.get('block_clearance_m',self.extra_clearance_m)
+        radius=self.display_margin/math.cos(math.pi/64)
+        margins=[radius+clearance/(s*math.cos(math.pi/64)) for s in self.physical_screen]
+        x,y=xy[0]*self.chart.width,xy[1]*self.chart.height
+        nearby=[]
+        for r in self.chart.block_areas.active(t):
+            c,s=abs(math.cos(r.angle)),abs(math.sin(r.angle))
+            hx=(r.size[0]*c+r.size[1]*s)/2+margins[0]*self.chart.width
+            hy=(r.size[0]*s+r.size[1]*c)/2+margins[1]*self.chart.height
+            if abs(x-r.center[0])<=hx and abs(y-r.center[1])<=hy:
+                nearby.append(r)
+        if not nearby:
+            return True
+        blocked=self.blocked_rectangles(tuple(nearby),clearance)
+        return not blocked.buffer(-1e-9).covers(point)
 
     def times(self, contact, step=.01):
         low, high = round(contact['start']*1000), round(contact['end']*1000)-1
         times = {low, high, *range(low, high+1, max(1, round(step*1000)))}
         for nid in contact['note_ids']:
             n = self.notes[nid][1]
-            beat = round(n.seconds*1000)
+            beat = round(self.judgement_time(contact,nid)*1000)
             times.update((beat-1, beat, beat+1, beat+10, beat+11))
         for t in self.chart.block_areas.key_times:
             ms = t*1000
@@ -123,7 +165,7 @@ class ContactGeometry:
             if contact['start']<=t<contact['end']:
                 checks.extend((t,max(contact['start'],t-1e-6),min(contact['end']-1e-7,t+1e-6)))
         for nid in contact['note_ids']:
-            when = self.notes[nid][1].seconds
+            when = self.judgement_time(contact,nid)
             if contact['start']-.0011<=when<contact['end']:
                 checks.append(when)
         milliseconds = {round(t*1000) for t in self.times(contact,step)}
@@ -226,7 +268,7 @@ def validate_contact(geometry, contact, points, step=.001, limit=10):
     times.add(contact['end']-1e-7)
     for t in sorted(times):
         xy = point_at(points, float(t))
-        if not geometry.zone(contact, float(t)).buffer(1e-9).covers(Point(*xy)):
+        if not geometry.allows_point(contact, float(t),xy):
             bad.append(float(t))
             if len(bad) >= limit:
                 break
