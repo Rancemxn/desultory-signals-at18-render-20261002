@@ -51,10 +51,10 @@ def legal_path(g, contact, screen):
     raise ValueError(f"No legal contact path: {contact['note_ids']}")
 
 
-def relay(contact, screen):
+def relay(contact, screen, finger_capacity=10):
     """Split long travelling holds into overlapping contacts; assignment chooses hands."""
     duration = contact['end']-contact['start']
-    if contact['kind'] != 'hold' or duration < 3.0:
+    if contact['kind'] != 'hold' or duration < 3.0 or finger_capacity<=2:
         return [contact]
     travel = sum(math.hypot((b[1]-a[1])*screen[0], (b[2]-a[2])*screen[1])
                  for a,b in zip(contact['points'],contact['points'][1:]))
@@ -148,7 +148,7 @@ def main():
         original = copy.deepcopy(c['points'])
         try:
             c['points'] = legal_path(g,c,screen)
-            pieces = relay(c,screen)
+            pieces = relay(c,screen,2*len(plan['settings']['fingers']))
         except ValueError:
             if c['kind']!='hold':
                 raise

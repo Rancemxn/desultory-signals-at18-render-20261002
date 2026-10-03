@@ -133,6 +133,7 @@ class GeneralRulesTests(unittest.TestCase):
 
     def test_travelling_relay_has_continuous_coverage(self):
         c = dict(kind='hold',note_ids=[91],start=10.,end=16.,points=[[10.,.1,.5],[15.999,.9,.5]])
+        self.assertEqual(relay(c,(.28,.1575),finger_capacity=2),[c])
         pieces = relay(c,(.28,.1575))
         self.assertGreater(len(pieces),1)
         self.assertEqual(pieces[0]['start'],c['start'])
