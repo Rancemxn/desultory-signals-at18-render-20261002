@@ -13,32 +13,16 @@ concurrency:
   group: sequential-general-charts
   cancel-in-progress: false
 jobs:
-  bake:
+  plan:
     runs-on: ubuntu-24.04
-    timeout-minutes: 350
-    outputs:
-      parts: ${{ steps.plan.outputs.parts }}
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/runtime
-      - id: plan
-        env:
+      - env:
           CHART: ${{ inputs.chart }}
           GH_TOKEN: ${{ github.token }}
         run: python -u batch_task.py plan "$CHART"
-      - run: python -u batch_task.py bake
-      - uses: actions/upload-artifact@v4
-        with:
-          name: continuous-bake
-          path: |
-            output/batch.json
-            output/full/handcam.blend
-            output/full/job.json
-            output/full/rig.json
-            output/full/diagnostics.json
-            output/full/provenance.json
-          compression-level: 1
-          retention-days: 3
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -50,7 +34,6 @@ jobs:
             output/assigned*/
             output/base/*.json
             output/base/*.log
-            output/full/*.log
           retention-days: 7
       - uses: actions/upload-artifact@v4
         with:
@@ -58,22 +41,73 @@ jobs:
           path: inputs/selected.zip
           compression-level: 0
           retention-days: 3
-  render:
+  bake:
+    needs: plan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 8
+      matrix:
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: planning
+          path: output
+      - uses: actions/download-artifact@v4
+        with:
+          name: selected-chart
+          path: inputs
+      - run: python -u batch_task.py bake ${{ matrix.part }}
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: baked-${{ matrix.part }}
+          path: |
+            output/part${{ matrix.part }}/*.json
+            output/part${{ matrix.part }}/*.log
+            output/part${{ matrix.part }}/handcam.blend
+          compression-level: 1
+          retention-days: 3
+  audit:
     needs: bake
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: baked-*
+          path: baked
+      - run: python -u parallel_task.py audit baked
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bake-review
+          path: output/full/*.json
+          retention-days: 7
+  render:
+    needs: audit
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     strategy:
       fail-fast: false
       max-parallel: 8
       matrix:
-        part: ${{ fromJSON(needs.bake.outputs.parts) }}
+        part: [0, 1, 2, 3, 4, 5, 6, 7]
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/runtime
       - uses: actions/download-artifact@v4
         with:
-          name: continuous-bake
+          name: planning
           path: output
+      - uses: actions/download-artifact@v4
+        with:
+          name: baked-${{ matrix.part }}
+          path: output/part${{ matrix.part }}
       - uses: actions/download-artifact@v4
         with:
           name: selected-chart
@@ -102,8 +136,8 @@ jobs:
           path: output
       - uses: actions/download-artifact@v4
         with:
-          name: continuous-bake
-          path: output
+          name: bake-review
+          path: output/full
       - uses: actions/download-artifact@v4
         with:
           name: selected-chart
@@ -118,4 +152,4 @@ jobs:
       - env:
           GH_TOKEN: ${{ github.token }}
           CHART: ${{ inputs.chart }}
-        run: gh release create "general-$CHART-${{ github.run_id }}" delivery/* --title "$CHART — 1080p60" --notes "General chart rules; full continuous hand animation; 1920x1080 at 60 FPS. See validation.json for geometry and pose diagnostics."
+        run: gh release create "general-$CHART-${{ github.run_id }}" delivery/* --title "$CHART — 1080p60" --notes "General chart rules; eight parallel bakes with same-time seam validation; 1920x1080 at 60 FPS. See validation.json for geometry and pose diagnostics."
