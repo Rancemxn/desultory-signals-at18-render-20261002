@@ -555,12 +555,12 @@ class Planner:
         return list(min(beam, key=lambda n: n.score).contacts)
 
     def share_flick_hold(self, task, state):
-        """A same-beat Hold may continue a Flick's already pressed fingertip.
+        """One same-beat Tap or Hold may share a Flick's pressed fingertip.
 
         Preserve the swipe and validate the intersection of both judgement
         bands. This never allocates an extra finger or skips either note.
         """
-        if task.note.type != NoteType.HOLD:
+        if task.note.type not in (NoteType.HOLD,NoteType.TAP):
             return []
         from contact_refinement import ContactGeometry,refine_contact,validate_contact
         geometry = ContactGeometry(self.chart,physical_screen=self.physical,extra_clearance_m=.004)
@@ -568,20 +568,21 @@ class Planner:
         for index,old in enumerate(state.contacts):
             if old['kind']!='flick' or abs(old['beat']-task.beat/1000)>.0011 or old['end']<=task.start/1000:
                 continue
-            if any(geometry.notes[n][1].type==NoteType.HOLD for n in old['note_ids']):
+            if any(geometry.notes[n][1].type in (NoteType.HOLD,NoteType.TAP) for n in old['note_ids']):
                 continue
             seed = self.project(self.zone(task,task.start),
                                 (old['points'][-1][1]*self.screen.width,old['points'][-1][2]*self.screen.height))
             if seed is None:
                 continue
-            tail = self.path(task,seed,task.end)
+            end=task.end if task.note.type==NoteType.HOLD else task.start+12
+            tail = self.path(task,seed,end)
             if tail is None:
-                tail = self.corridor_path(task,task.end)
+                tail = self.corridor_path(task,end)
             if tail is None:
                 continue
             merged = copy.deepcopy(old)
-            merged.update(note_ids=[*old['note_ids'],task.id],end=max(old['end'],(task.end+1)/1000),
-                          joint_note_coverage=True,shared_contact='same_beat_flick_hold')
+            merged.update(note_ids=[*old['note_ids'],task.id],end=max(old['end'],(end+1)/1000),
+                          joint_note_coverage=True,shared_contact='same_beat_flick_press')
             merged['points'] = old['points']+[p for p in tail if p[0]>old['points'][-1][0]]
             points,_ = refine_contact(geometry,merged)
             if points is None or validate_contact(geometry,merged,points):
@@ -613,10 +614,19 @@ class Planner:
                 merged['points'].append([merged['end']-.001,*old['points'][-1][1:]])
             cache_key=('hold',tuple(sorted(merged['note_ids'])),merged['start'],merged['end'])
             if cache_key not in self.shared_paths:
-                points,_=refine_contact(geometry,merged,iterations=60)
-                if points is not None and (validate_contact(geometry,merged,points) or
-                        self.blocks.path_violations(points,merged['start'],merged['end'])):
-                    points=None
+                origin=point_at(old['points'],task.note.seconds)
+                merged['points']=[[merged['start'],*origin],[round(merged['end']-.001,3),*origin]]
+                points=None
+                extra=set()
+                for _ in range(3):
+                    candidate,_=refine_contact(geometry,merged,iterations=60,extra_times=extra)
+                    if candidate is None:
+                        break
+                    bad=validate_contact(geometry,merged,candidate,limit=128)
+                    if not bad and not self.blocks.path_violations(candidate,merged['start'],merged['end']):
+                        points=candidate
+                        break
+                    extra.update(bad)
                 self.shared_paths[cache_key]=points
             points=self.shared_paths[cache_key]
             if points is None:
@@ -645,6 +655,13 @@ class Planner:
                 merged['kind']='drag'
             if merged['end']>old['end']:
                 merged['points'].append([merged['end']-.001,*old['points'][-1][1:]])
+            window=dict(merged,note_ids=[task.id],kind='drag',
+                        start=max(old['start'],task.note.seconds-.0011),
+                        end=min(old['end'],task.note.seconds+.011))
+            if merged['end']==old['end'] and not validate_contact(geometry,window,old['points']):
+                contacts=list(state.contacts);contacts[index]=merged
+                result.append(State(tuple(contacts),state.score))
+                continue
             extra = set()
             for attempt in range(3):
                 points,_ = refine_contact(geometry,merged,extra_times=extra)

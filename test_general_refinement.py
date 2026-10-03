@@ -6,6 +6,18 @@ from contact_refinement import ContactGeometry, validate_contact
 
 
 class GeneralRulesTests(unittest.TestCase):
+    def test_two_stacked_taps_and_a_flick_keep_two_down_contacts(self):
+        from types import SimpleNamespace
+        from algo.algo5 import Planner,Settings
+        from handcam_motion import default_profile
+        chart,line=fixture(NoteType.FLICK,[8.],[2.])
+        line.notes.extend(SimpleNamespace(type=NoteType.TAP,seconds=2.,hold=0.,offset=8+0j) for _ in range(2))
+        contacts=Planner(chart,Settings(fingers=('index',)),default_profile()).run()
+        self.assertEqual(len(contacts),2)
+        self.assertEqual({n for c in contacts for n in c['note_ids']},{0,1,2})
+        self.assertTrue(all(sum(n in (1,2) for n in c['note_ids'])==1 for c in contacts))
+        for c in contacts:self.assertFalse(validate_contact(ContactGeometry(chart),c,c['points']))
+
     def test_discontinuous_hold_keeps_both_original_bands_covered(self):
         from types import SimpleNamespace
         from general_refinement import collective_hold
