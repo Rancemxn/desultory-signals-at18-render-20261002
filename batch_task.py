@@ -19,6 +19,7 @@ CHARTS = {
     'EntrancetotheChaos': 'IN',
     'ExoplanetaryMirage': 'AT',
     'Hate': 'AT',
+    'OblivionPHIN': 'IN',
 }
 
 
@@ -27,8 +28,13 @@ def prepare(key):
     source = Path('inputs')/(key+'.zip')
     run(['gh','release','download','batch-inputs-v1','--pattern',source.name,'--dir','inputs','--clobber'])
     with zipfile.ZipFile(source) as z, zipfile.ZipFile('inputs/selected.zip','w',zipfile.ZIP_DEFLATED) as target:
-        for name, renamed in [(f'chart_{level}.json','chart.json'),('music.wav','music.wav'),
-                              ('illustration.jpg','illustration.jpg'),('info.yml','info.yml')]:
+        names = [(f'chart_{level}.json','chart.json'),('music.wav','music.wav')]
+        picture = next((n for n in ('illustration.jpg','illustration.png') if n in z.namelist()),None)
+        if picture is None:
+            raise ValueError('Input archive has no illustration')
+        names.append((picture,picture))
+        names.extend((n,n) for n in ('info.yml','info.txt') if n in z.namelist())
+        for name, renamed in names:
             target.writestr(renamed,z.read(name))
     Path('output').mkdir(exist_ok=True)
     with zipfile.ZipFile('inputs/selected.zip') as z:

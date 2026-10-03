@@ -6,7 +6,7 @@ on:
       chart:
         required: true
         type: choice
-        options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate]
+        options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate, OblivionPHIN]
       plan_run:
         description: Optional prior run whose validated plan should be reused
         required: false
