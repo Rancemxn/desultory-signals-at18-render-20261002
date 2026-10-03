@@ -14,6 +14,23 @@ def area(lo=(.2,.2), hi=(.8,.8), **values):
 
 
 class TestBlocks(unittest.TestCase):
+    def test_time_index_matches_native_float_edges_and_input_order(self):
+        import random
+        randomizer = random.Random(71)
+        entries = []
+        for i in range(120):
+            entry = area()
+            start = randomizer.uniform(-3,10)
+            entry.update(enableTime=start,disableTime=start+randomizer.uniform(-.2,4))
+            entries.append(entry)
+        blocks = BlockAreas(entries)
+        times = [randomizer.uniform(-4,15) for _ in range(300)]
+        times += [t+d for b in blocks.areas for t in (b.enable,b.disable) for d in (-1e-8,0,1e-8)]
+        for t in times:
+            expected = tuple(b for b in blocks.areas if b.active(t))
+            self.assertEqual(blocks.active_areas(t),expected)
+        self.assertEqual(BlockAreas().active_areas(2),())
+
     def test_empty_and_timing(self):
         b=BlockAreas([area()])
         self.assertFalse(b.contains(.999,8,4.5))

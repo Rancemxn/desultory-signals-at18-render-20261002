@@ -6,13 +6,17 @@ on:
       chart:
         required: true
         type: choice
-        options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate, OblivionPHIN]
+        options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate, OblivionPHIN, EntrancetotheChaos-IN-index2, ExoplanetaryMirage-IN-index2]
       plan_run:
         description: Optional prior run whose validated plan should be reused
         required: false
         type: string
       bake_run:
         description: Optional prior run whose eight completed bakes should be reused
+        required: false
+        type: string
+      refine_run:
+        description: Optional prior run whose final assigned contacts should be revalidated
         required: false
         type: string
 permissions:
@@ -30,8 +34,20 @@ jobs:
       - env:
           CHART: ${{ inputs.chart }}
           GH_TOKEN: ${{ github.token }}
-        if: ${{ inputs.plan_run == '' }}
+        if: ${{ inputs.plan_run == '' && inputs.refine_run == '' }}
         run: python -u batch_task.py plan "$CHART"
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.refine_run != '' && inputs.plan_run == '' }}
+        with:
+          name: planning
+          path: output
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.refine_run }}
+      - if: ${{ inputs.refine_run != '' && inputs.plan_run == '' }}
+        env:
+          CHART: ${{ inputs.chart }}
+          GH_TOKEN: ${{ github.token }}
+        run: python -u batch_task.py resume-plan "$CHART"
       - uses: actions/download-artifact@v4
         if: ${{ inputs.plan_run != '' }}
         with:

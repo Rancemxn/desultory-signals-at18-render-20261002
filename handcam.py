@@ -234,6 +234,8 @@ def main(argv=None):
     parser.add_argument('--audio', type=Path, help='overrides the music in the chart archive')
     parser.add_argument('--psap', type=Path, help='replay an existing plan instead of running a planner')
     parser.add_argument('--motion-plan', type=Path, help='algo5 motion-plan.json accompanying --psap')
+    parser.add_argument('--fingers', nargs='+', choices=('index','middle','ring','little','thumb'),
+                        help='Allowed fingers on each hand for algo5 planning')
     parser.add_argument('--strict-psap', action='store_true', help='display every raw contact, including redundant overlaps')
     parser.add_argument('--algorithm', type=int, choices=(1, 2, 3, 4, 5), default=1,
                         help='existing planner; algo1 usually releases idle contacts sooner (default: 1)')
@@ -356,8 +358,9 @@ def main(argv=None):
             with Console().status(f'Planning touches (algo{args.algorithm})...'), (out / 'solve.log').open('w', encoding='utf-8') as log:
                 algorithm = importlib.import_module(f'algo.algo{args.algorithm}')
                 if args.algorithm == 5:
+                    settings = algorithm.Settings(fingers=tuple(args.fingers)) if args.fingers else None
                     screen, answer, motion_plan = algorithm.plan(planning, config, Console(file=log),
-                                                               profile=profile, view_width=.28 / args.screen_fill)
+                                                               settings=settings, profile=profile, view_width=.28 / args.screen_fill)
                 else:
                     screen, answer = algorithm.solve(planning, config, Console(file=log))
             content = dump_data(screen, answer)

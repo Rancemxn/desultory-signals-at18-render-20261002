@@ -29,6 +29,9 @@ def main():
         chart = load_chart(archive.read('chart.json').decode('utf-8-sig'))
     contacts = sorted(plan['contacts'],key=lambda c:(c['start'],c['pointer']))
     plan['contacts'] = contacts
+    allowed = set(plan['settings']['fingers'])
+    if any(c['finger'] not in allowed for c in contacts):
+        raise ValueError('Contact uses a disabled finger')
     plan['settings'].update(finger_speed=1.2,finger_acceleration=12.,wrist_speed=.55,wrist_acceleration=4.)
     events = defaultdict(list)
     for c in contacts:
@@ -91,7 +94,9 @@ def main():
                 coverage_failures.append({'note':nid,'time':t,'type':int(note.type)})
                 break
     topology = audit(contacts,plan['physical_screen'])
-    report = dict(notes=len(notes),contacts=len(contacts),boundary_mode='aligned',tap_width_ratio=.5,hold_width_ratio=.5,drag_width_ratio=.3,
+    report = dict(notes=len(notes),contacts=len(contacts),allowed_fingers=sorted(allowed),
+        used_fingers=sorted({(c['hand'],c['finger']) for c in contacts}),
+        boundary_mode='aligned',tap_width_ratio=.5,hold_width_ratio=.5,drag_width_ratio=.3,
         terminal_hold_releases=[dict(notes=c['note_ids'],end=c['end'],early_ms=c['terminal_hold_release_ms'],
                                     reason=c['terminal_hold_release_reason'])
                                 for c in contacts if 'terminal_hold_release_ms' in c],

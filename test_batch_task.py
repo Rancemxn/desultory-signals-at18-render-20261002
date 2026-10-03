@@ -3,6 +3,21 @@ from batch_task import interval
 
 
 class BatchIntervalsTests(unittest.TestCase):
+    def test_queues_reserve_one_slot_for_each_lane(self):
+        from batch_queue import next_chart,LANES
+        state = {'charts':{k:{'run':1,'status':'downloaded'} for k in LANES['original'][:4]}}
+        first,second = LANES['index2']
+        self.assertEqual(next_chart(state,[]),first)
+        busy = [{'displayTitle':first+' general 1080p60','status':'in_progress'}]
+        self.assertEqual(next_chart(state,busy),'ExoplanetaryMirage')
+        state['charts'][first]={'run':2,'status':'downloaded'}
+        self.assertEqual(next_chart(state,[]),second)
+        both = busy+[{'displayTitle':'Hate general 1080p60','status':'queued'}]
+        self.assertIsNone(next_chart(state,both))
+        for key in LANES['original']:
+            state['charts'][key]={'run':1,'status':'failed'}
+        self.assertIsNone(next_chart(state,busy))
+
     def test_queue_respects_two_cloud_workflows(self):
         from batch_queue import available_slots
         self.assertEqual(available_slots([]),2)

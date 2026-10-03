@@ -13,12 +13,20 @@ from handcam_motion import FINGER_ORDER, finish_motion, palm_offsets, point_at, 
 KEYS = [(hand,finger) for hand in ('left','right') for finger in ('index','middle','ring','little','thumb')]
 
 
-def pair_cost(a,b,screen,offsets,comfort=None):
+def assignment_keys(plan):
+    allowed = plan.get('settings',{}).get('fingers',[k[1] for k in KEYS])
+    keys = [k for k in KEYS if k[1] in allowed]
+    if not keys:
+        raise ValueError('No enabled fingers for assignment')
+    return keys
+
+
+def pair_cost(a,b,screen,offsets,comfort=None,keys=KEYS):
     comfort = comfort or {}
-    samehand = np.array([[x[0]==y[0] for y in KEYS] for x in KEYS])
-    samefinger = np.eye(len(KEYS),dtype=bool)
+    samehand = np.array([[x[0]==y[0] for y in keys] for x in keys])
+    samefinger = np.eye(len(keys),dtype=bool)
     gap = b['start']-a['end']
-    cost = np.zeros((len(KEYS),len(KEYS)))
+    cost = np.zeros((len(keys),len(keys)))
     if gap < -1e-8:
         low,high = b['start'],min(a['end'],b['end'])-1e-7
         # Linear contact paths attain their extreme relative X at these knots.
@@ -32,7 +40,7 @@ def pair_cost(a,b,screen,offsets,comfort=None):
             anchors = (left-offsets)[:,None,:]-(right-offsets)[None,:,:]
             span = np.maximum(span,np.linalg.norm(anchors,axis=2))
             reverse = np.maximum(reverse,-(left[0]-right[0])*np.sign(natural_x))
-        ordered = np.array([[x[1]!='thumb' and y[1]!='thumb' and x!=y for y in KEYS] for x in KEYS])
+        ordered = np.array([[x[1]!='thumb' and y[1]!='thumb' and x!=y for y in keys] for x in keys])
         cost += samehand*(180*(span/.05)**2 + 2e6*np.maximum(0,span-.04)**2)
         cost += samehand*ordered*(reverse>.002)*1e8
         if comfort:
@@ -42,8 +50,8 @@ def pair_cost(a,b,screen,offsets,comfort=None):
             min_distance = float(np.min(np.linalg.norm(pa-pb,axis=1)))
             cost += samehand*3e6*max(0,comfort.get('finger_spacing_m',.018)-min_distance)**2
         # Crossing complete hands is also expensive; a central relay remains allowed.
-        for ka,(ha,_) in enumerate(KEYS):
-            for kb,(hb,_) in enumerate(KEYS):
+        for ka,(ha,_) in enumerate(keys):
+            for kb,(hb,_) in enumerate(keys):
                 if ha!=hb:
                     crossed = np.max((pa[:,0]-pb[:,0])*(1 if ha=='left' else -1))
                     cost[ka,kb] += 2e6*max(0,crossed-.025)**2
@@ -66,15 +74,16 @@ def pair_cost(a,b,screen,offsets,comfort=None):
 
 
 def graph(contacts,plan):
+    keys = assignment_keys(plan)
     measured = palm_offsets(plan['profile'])
-    offsets = np.array([measured[-1 if h=='left' else 1,f][:2] for h,f in KEYS])
-    unary = np.zeros((len(contacts),len(KEYS)))
+    offsets = np.array([measured[-1 if h=='left' else 1,f][:2] for h,f in keys])
+    unary = np.zeros((len(contacts),len(keys)))
     neighbors = [[] for _ in contacts]
     comfort = plan.get('comfort',{})
     priorities = comfort.get('finger_costs',{'index':0.,'middle':.1,'ring':1.,'little':12.,'thumb':35.})
     for i,c in enumerate(contacts):
         x = sum(p[1] for p in c['points'])/len(c['points'])
-        for k,(hand,finger) in enumerate(KEYS):
+        for k,(hand,finger) in enumerate(keys):
             side = -1 if hand=='left' else 1
             unary[i,k] = 3000*max(0,-side*(x-.5)-.06)**2 + priorities[finger]
             if c.get('manual_hand') and hand!=c['manual_hand']:
@@ -86,7 +95,7 @@ def graph(contacts,plan):
             b = contacts[j]
             if b['start']>a['end']+.45:
                 break
-            matrix = pair_cost(a,b,plan['physical_screen'],offsets,comfort)
+            matrix = pair_cost(a,b,plan['physical_screen'],offsets,comfort,keys)
             neighbors[i].append((j,matrix))
             neighbors[j].append((i,matrix.T))
     return unary,neighbors
@@ -213,17 +222,17 @@ def main():
                 c['fixed_finger'] = [c['hand'],c['finger']]
     contacts = sorted(plan['contacts'],key=lambda c:(c['start'],c['pointer']))
     plan['contacts'] = contacts
-    plan['settings']['fingers'] = ['index','middle','ring','little','thumb']
+    keys = assignment_keys(plan)
     baseline = audit(contacts,plan['physical_screen'])
     unary,neighbors = graph(contacts,plan)
-    initial = np.array([KEYS.index((c['hand'],c['finger'])) for c in contacts])
+    initial = np.array([keys.index((c['hand'],c['finger'])) for c in contacts])
     before = objective(initial,unary,neighbors)
     beam = beam_assign(unary,neighbors,args.beam)
     a = descend(initial,unary,neighbors)
     b = descend(beam,unary,neighbors)
     labels = min((a,b),key=lambda x:objective(x,unary,neighbors))
     for c,label in zip(contacts,labels):
-        c['hand'],c['finger'] = KEYS[label]
+        c['hand'],c['finger'] = keys[label]
         c['pointer'] = (0 if c['hand']=='left' else 5)+FINGER_ORDER.index(c['finger'])
     plan['hand_rest'] = finish_motion(contacts,plan['profile'],plan['physical_screen'],.28/.82)
     result = audit(contacts,plan['physical_screen'])

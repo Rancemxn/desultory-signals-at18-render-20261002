@@ -230,13 +230,47 @@ class BlockAreas:
         self.areas = tuple(BlockArea(d, width, height, i) for i,d in enumerate(entries))
         self.key_times = tuple(sorted({t for b in self.areas for t in (
             b.appear, b.enable, b.disable, b.disappear, *(t for times in b.times.values() for t in times))}))
+        self._activation_index = self._index(tuple(b for b in self.areas if b.enable < b.disable))
+
+    @classmethod
+    def _index(cls, areas):
+        """Centered interval tree: store each block once, with inclusive/exclusive edges."""
+        if not areas:
+            return None
+        centers = sorted((b.enable+b.disable)/2 for b in areas)
+        center = centers[len(centers)//2]
+        left, right, crossing = [], [], []
+        for b in areas:
+            if b.disable <= center:
+                left.append(b)
+            elif b.enable > center:
+                right.append(b)
+            else:
+                crossing.append(b)
+        starts = tuple(sorted(crossing, key=lambda b: b.enable))
+        ends = tuple(sorted(crossing, key=lambda b: b.disable))
+        return (center, tuple(b.enable for b in starts), starts,
+                tuple(b.disable for b in ends), ends, cls._index(left), cls._index(right))
+
+    def active_areas(self, seconds):
+        seconds = f32(seconds)
+        node, found = self._activation_index, []
+        while node is not None:
+            center, starts, by_start, ends, by_end, left, right = node
+            if seconds < center:
+                found.extend(by_start[:bisect_right(starts, seconds)])
+                node = left
+            else:
+                found.extend(by_end[bisect_right(ends, seconds):])
+                node = right
+        return tuple(sorted(found, key=lambda b: b.index))
 
     def __bool__(self):
         return bool(self.areas)
 
     @lru_cache(maxsize=8192)
     def active(self, seconds):
-        return tuple(b.rectangle(seconds) for b in self.areas if b.active(seconds))
+        return tuple(b.rectangle(seconds) for b in self.active_areas(seconds))
 
     @lru_cache(maxsize=4096)
     def forbidden(self, seconds):

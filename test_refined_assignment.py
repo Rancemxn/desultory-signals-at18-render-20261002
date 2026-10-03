@@ -6,6 +6,19 @@ from refine_assignments import KEYS,audit,beam_assign,graph,objective
 
 
 class AssignmentTests(unittest.TestCase):
+    def test_index_only_domain_survives_global_assignment(self):
+        from refine_assignments import assignment_keys,descend
+        contacts = [dict(start=0.,end=.08,points=[[0.,x,.5],[.079,x,.5]],
+                         kind='tap',note_ids=[i],hand=hand,finger='index')
+                    for i,(x,hand) in enumerate(((.2,'left'),(.8,'right')))]
+        plan = dict(profile=default_profile(),physical_screen=[.28,.1575],settings={'fingers':['index']})
+        keys = assignment_keys(plan)
+        self.assertEqual(keys,[('left','index'),('right','index')])
+        unary,neighbors = graph(contacts,plan)
+        self.assertEqual(unary.shape,(2,2))
+        labels = descend(beam_assign(unary,neighbors,32),unary,neighbors)
+        self.assertEqual({keys[k] for k in labels},set(keys))
+
     def test_left_hand_chord_does_not_cross_or_reuse_a_finger(self):
         contacts = [dict(start=0.,end=1.,points=[[0.,x,.5],[.999,x,.5]],
                     kind='hold',note_ids=[i],manual_hand='left',hand='left',finger=finger)

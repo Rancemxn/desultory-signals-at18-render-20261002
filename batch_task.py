@@ -7,6 +7,7 @@ from pathlib import Path
 import shutil
 import subprocess
 import sys
+import time
 import zipfile
 
 from task import run, validate
@@ -20,12 +21,15 @@ CHARTS = {
     'ExoplanetaryMirage': 'AT',
     'Hate': 'AT',
     'OblivionPHIN': 'IN',
+    'EntrancetotheChaos-IN-index2': 'IN',
+    'ExoplanetaryMirage-IN-index2': 'IN',
 }
 
 
 def prepare(key):
     level = CHARTS[key]
-    source = Path('inputs')/(key+'.zip')
+    source_key = key.removesuffix('-IN-index2')
+    source = Path('inputs')/(source_key+'.zip')
     run(['gh','release','download','batch-inputs-v1','--pattern',source.name,'--dir','inputs','--clobber'])
     with zipfile.ZipFile(source) as z, zipfile.ZipFile('inputs/selected.zip','w',zipfile.ZIP_DEFLATED) as target:
         names = [(f'chart_{level}.json','chart.json'),('music.wav','music.wav')]
@@ -41,7 +45,8 @@ def prepare(key):
         Path('inputs/music.wav').write_bytes(z.read('music.wav'))
     media = json.loads(subprocess.check_output(['ffprobe','-v','error','-show_format','-of','json','inputs/music.wav'],text=True))
     frames = math.ceil(float(media['format']['duration'])*60)
-    meta = dict(key=key,title='ハテ' if key=='Hate' else key,level=level,frames=frames,duration=frames/60,
+    meta = dict(key=key,source_key=source_key,title='ハテ' if key=='Hate' else source_key,level=level,frames=frames,duration=frames/60,
+                allowed_fingers=['index'] if key.endswith('-IN-index2') else ['index','middle','ring','thumb','little'],
                 source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),parts=list(range(8)))
     Path('output/batch.json').write_text(json.dumps(meta,indent=2))
     output = os.environ.get('GITHUB_OUTPUT')
@@ -58,18 +63,58 @@ def metadata():
 def common(meta):
     return [sys.executable,'-u','handcam.py','inputs/selected.zip','--model','inputs/hands.blend',
         '--resources','inputs/resources.zip','--blender',BLENDER,'--algorithm',5,
-        '--title',meta['title'],'--level',meta['level'],'--width',1920,'--height',1080,'--fps',60]
+        '--title',meta['title'],'--level',meta['level'],'--width',1920,'--height',1080,'--fps',60,
+        '--fingers',*meta.get('allowed_fingers',['index','middle','ring','thumb','little'])]
+
+
+def planning_stage(name, args):
+    started = time.monotonic()
+    print('PLAN_STAGE', name, 'started', flush=True)
+    process = subprocess.Popen(list(map(str,args)))
+    try:
+        while True:
+            try:
+                code = process.wait(timeout=30)
+                if code:
+                    raise subprocess.CalledProcessError(code,args)
+                break
+            except subprocess.TimeoutExpired:
+                log = Path('output/base/solve.log')
+                last = log.read_text(encoding='utf-8').splitlines()[-1:] if log.exists() else []
+                print('PLAN_HEARTBEAT',name,'elapsed_seconds',round(time.monotonic()-started),*last,flush=True)
+    finally:
+        if process.poll() is None:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+    print('PLAN_STAGE',name,'completed_seconds',round(time.monotonic()-started,1),flush=True)
 
 
 def plan(key):
     meta = prepare(key)
-    run(common(meta)+['--full','--plan-only','--output','output/base'])
-    run([sys.executable,'-u','general_refinement.py','output/base/motion-plan.json','inputs/selected.zip','output/rules/motion-plan.json'])
-    run([sys.executable,'-u','merge_shared_drags.py','output/rules/motion-plan.json','inputs/selected.zip','output/rules/merged.json'])
-    run([sys.executable,'-u','refine_assignments.py','output/rules/merged.json','output/assigned','--beam',96])
-    run([sys.executable,'-u','spread_contacts.py','output/assigned/assigned-motion-plan.json','inputs/selected.zip','output/rules/spaced.json'])
-    run([sys.executable,'-u','refine_assignments.py','output/rules/spaced.json','output/assigned-final','--beam',96])
-    run([sys.executable,'-u','finalize_refinement.py','output/assigned-final/assigned-motion-plan.json','inputs/selected.zip','output/plan'])
+    planning_stage('initial-fingering',common(meta)+['--full','--plan-only','--output','output/base'])
+    planning_stage('contact-paths',[sys.executable,'-u','general_refinement.py','output/base/motion-plan.json','inputs/selected.zip','output/rules/motion-plan.json'])
+    planning_stage('shared-drags',[sys.executable,'-u','merge_shared_drags.py','output/rules/motion-plan.json','inputs/selected.zip','output/rules/merged.json'])
+    planning_stage('assignment',[sys.executable,'-u','refine_assignments.py','output/rules/merged.json','output/assigned','--beam',96])
+    planning_stage('contact-spacing',[sys.executable,'-u','spread_contacts.py','output/assigned/assigned-motion-plan.json','inputs/selected.zip','output/rules/spaced.json'])
+    planning_stage('final-assignment',[sys.executable,'-u','refine_assignments.py','output/rules/spaced.json','output/assigned-final','--beam',96])
+    planning_stage('validation',[sys.executable,'-u','finalize_refinement.py','output/assigned-final/assigned-motion-plan.json','inputs/selected.zip','output/plan'])
+
+
+def resume_plan(key):
+    previous = metadata()
+    meta = prepare(key)
+    for field in ('key','level','source_sha256'):
+        if previous[field] != meta[field]:
+            raise ValueError('Refinement artifact does not match requested chart: '+field)
+    source = 'output/assigned-final/assigned-motion-plan.json'
+    plan = json.loads(Path(source).read_text())
+    if set(plan['settings']['fingers']) != set(meta['allowed_fingers']):
+        raise ValueError('Refinement artifact uses a different finger configuration')
+    planning_stage('validation',[sys.executable,'-u','finalize_refinement.py',source,'inputs/selected.zip','output/plan'])
 
 
 def interval(meta, part):
@@ -169,7 +214,8 @@ def assemble():
     assert [p['blend_sha256'] for p in provenance]==[p['blend_sha256'] for p in seams['bakes']]
     listing = delivery/'concat.txt'
     listing.write_text(''.join(f"file '{p.name}'\n" for p in videos))
-    target = delivery/f"{meta['key']}-{meta['level']}-1080p60.mp4"
+    name = meta['key'] if meta['key'].endswith('-IN-index2') else f"{meta['key']}-{meta['level']}"
+    target = delivery/f"{name}-1080p60.mp4"
     run(['ffmpeg','-v','error','-y','-f','concat','-safe',0,'-i',listing,'-i',delivery/'audio.wav',
         '-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-t',meta['duration'],'-movflags','+faststart',target])
     media = validate(target,meta['frames'])
@@ -180,6 +226,10 @@ def assemble():
         parallel_bakes=8,seam_validation=seams,provenance=provenance,native_ap_validated=False,
         contact_validation=json.loads(Path('output/plan/refinement-validation.json').read_text()),
         pose_diagnostics=json.loads(Path('output/full/diagnostics.json').read_text()))
+    plan = json.loads(Path('output/plan/motion-plan.json').read_text())
+    used = sorted({(c['hand'],c['finger']) for c in plan['contacts']})
+    assert all(f in meta.get('allowed_fingers',plan['settings']['fingers']) for _,f in used)
+    report['used_fingers'] = used
     (delivery/'validation.json').write_text(json.dumps(report,indent=2))
     for source in ('output/plan/motion-plan.json','output/plan/plan.psap','output/rules/general-rules.json'):
         shutil.copyfile(source,delivery/Path(source).name)
@@ -191,6 +241,7 @@ def assemble():
 if __name__=='__main__':
     stage = sys.argv[1]
     if stage=='plan': plan(sys.argv[2])
+    elif stage=='resume-plan': resume_plan(sys.argv[2])
     elif stage=='bake': bake(int(sys.argv[2]))
     elif stage=='render': render(int(sys.argv[2]))
     elif stage=='assemble': assemble()

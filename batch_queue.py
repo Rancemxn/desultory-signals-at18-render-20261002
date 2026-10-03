@@ -8,7 +8,9 @@ import time
 ROOT = Path(__file__).resolve().parent
 STATE = ROOT/'.local/batch-state.json'
 ORDER = ['AboutTheUniverse','TrueHomeTrueWorldRework','Implexrough','EntrancetotheChaos',
-         'ExoplanetaryMirage','Hate','OblivionPHIN']
+         'ExoplanetaryMirage','Hate','OblivionPHIN',
+         'EntrancetotheChaos-IN-index2','ExoplanetaryMirage-IN-index2']
+LANES = {'index2': ORDER[-2:], 'original': ORDER[:-2]}
 DEST = ROOT.parent/'delivery/general-charts'
 LIVE = {'queued','in_progress','waiting','requested','pending'}
 
@@ -32,9 +34,24 @@ def available_slots(remote):
     return max(0,2-sum(r['status'] in LIVE for r in remote))
 
 
+def next_chart(state, remote):
+    if not available_slots(remote):
+        return None
+    live = {r['displayTitle'].removesuffix(' general 1080p60')
+            for r in remote if r['status'] in LIVE}
+    for keys in LANES.values():
+        if live.intersection(keys):
+            continue
+        for key in keys:
+            if not state['charts'].get(key,{}).get('run'):
+                return key
+    return None
+
+
 def main():
     state = json.loads(STATE.read_text(encoding='utf-8'))
     state['max_parallel_charts']=2
+    state['lanes']=LANES
     while True:
         remote = runs()
         for run in remote:
@@ -57,6 +74,10 @@ def main():
             target.mkdir(parents=True,exist_ok=True)
             gh('release','download',f"general-{key}-{entry['run']}",'--dir',target,'--clobber')
             report = json.loads((target/'validation.json').read_text(encoding='utf-8'))
+            if key.endswith('-IN-index2'):
+                assert report['chart']['level']=='IN'
+                assert report['chart']['allowed_fingers']==['index']
+                assert report['used_fingers'] and all(f=='index' for _,f in report['used_fingers'])
             video = next(target.glob('*.mp4'))
             with video.open('rb') as f:
                 digest = hashlib.file_digest(f,'sha256').hexdigest()
@@ -69,7 +90,7 @@ def main():
             remote = runs()
             if not available_slots(remote):
                 break
-            key = next((k for k in ORDER if not state['charts'].get(k,{}).get('run')),None)
+            key = next_chart(state,remote)
             if key is None:
                 break
             existing = next((r for r in remote if r['displayTitle']==key+' general 1080p60'
