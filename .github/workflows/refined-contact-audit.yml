@@ -1,0 +1,43 @@
+name: Verify saved fingertips near reported block
+on:
+  workflow_dispatch:
+    inputs:
+      bake_run:
+        required: true
+        type: string
+permissions:
+  contents: read
+  actions: read
+jobs:
+  audit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/runtime
+      - uses: actions/download-artifact@v4
+        with:
+          name: refined-full-bake
+          path: output/full
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - run: |
+          python - <<'PY'
+          import hashlib,json,subprocess
+          from pathlib import Path
+          out=Path('output/full')
+          proof=json.loads((out/'provenance.json').read_text())
+          with (out/'handcam.blend').open('rb') as stream:
+              assert hashlib.file_digest(stream,'sha256').hexdigest()==proof['blend_sha256']
+          subprocess.run(['/home/runner/blender-headless','--background','--disable-autoexec',str(out/'handcam.blend'),
+              '--python-exit-code','1','--python','inspect_pose_numeric.py','--',str(out/'job.json'),str(out/'block79-numeric.json'),
+              '--start','78.5','--end','80.5','--mesh-times',*[str(78.5+i/60) for i in range(120)]],check=True)
+          subprocess.run(['python','audit_saved_blocks.py',str(out/'job.json'),str(out/'block79-numeric.json'),
+              str(out/'block79-audit.json'),'--chart','inputs/desultory-signals.zip'],check=True)
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: refined-block79-audit
+          path: output/full/block79-*.json
+          retention-days: 7
