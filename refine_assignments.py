@@ -180,6 +180,43 @@ def descend(labels,unary,neighbors,passes=20):
     return labels
 
 
+def repair_topology(labels,unary,neighbors,contacts=None):
+    """Repair forbidden overlaps/order with a small exact neighborhood solve."""
+    import z3
+    edges=[(i,j,matrix) for i,items in enumerate(neighbors) for j,matrix in items
+           if j>i and np.any(matrix>=1e8) and (contacts is None or
+           max(contacts[i]['start'],contacts[j]['start'])<min(contacts[i]['end'],contacts[j]['end'])-1e-8)]
+    bad=[(i,j) for i,j,m in edges if m[labels[i],labels[j]]>=1e8]
+    if not bad:return labels
+    affected={i for edge in bad for i in edge}
+    for depth in range(4):
+        opt=z3.Optimize();opt.set(timeout=30000)
+        variables={i:z3.Int('finger_'+str(i)) for i in affected}
+        for i,v in variables.items():
+            allowed=[k for k in range(unary.shape[1]) if unary[i,k]<1e9]
+            opt.add(z3.Or(*[v==k for k in allowed]))
+            opt.add_soft(v==int(labels[i]),weight=1)
+        for i,j,m in edges:
+            if i not in affected and j not in affected:continue
+            if i in affected and j in affected:
+                forbidden=np.argwhere(m>=1e8)
+                for a,b in forbidden:
+                    opt.add(z3.Or(variables[i]!=int(a),variables[j]!=int(b)))
+            elif i in affected:
+                opt.add(z3.Or(*[variables[i]==k for k in range(unary.shape[1]) if m[k,labels[j]]<1e8]))
+            else:
+                opt.add(z3.Or(*[variables[j]==k for k in range(unary.shape[1]) if m[labels[i],k]<1e8]))
+        if opt.check()==z3.sat:
+            model=opt.model();result=labels.copy()
+            for i,v in variables.items():result[i]=model.eval(v).as_long()
+            if any(m[result[i],result[j]]>=1e8 for i,j,m in edges):
+                raise AssertionError('Topology repair left a forbidden assignment')
+            print('ASSIGN_TOPOLOGY_REPAIR',len(affected),'changed',int(np.sum(result!=labels)),flush=True)
+            return result
+        affected|={j for i,j,m in edges if i in affected}|{i for i,j,m in edges if j in affected}
+    raise ValueError('No non-overlapping ordered finger assignment in conflict neighborhood')
+
+
 def audit(contacts,screen):
     crossings,overlaps,transfers = [],[],[]
     last = {}
@@ -249,6 +286,7 @@ def main():
         a = descend(initial,unary,neighbors)
         b = descend(beam,unary,neighbors)
         labels = min((a,b),key=lambda x:objective(x,unary,neighbors))
+        labels = repair_topology(labels,unary,neighbors,contacts)
         after = objective(labels,unary,neighbors)
     for c,label in zip(contacts,labels):
         c['hand'],c['finger'] = keys[label]

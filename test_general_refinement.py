@@ -6,6 +6,26 @@ from contact_refinement import ContactGeometry, validate_contact
 
 
 class GeneralRulesTests(unittest.TestCase):
+    def test_coincident_collective_heads_share_without_losing_original_bands(self):
+        from general_refinement import collective_hold,merge_collective_holds
+        from shapely.geometry import Point
+        chart,line=fixture(NoteType.HOLD,[8.,8.1],[2.,2.],.08)
+        class Vertical:
+            def __matmul__(self,t):return __import__('math').pi/2
+        line.angle=Vertical()
+        line.pos=lambda t,offset:complex(offset.real,2 if int((t-2)*1000)%20<10 else 7)
+        g=ContactGeometry(chart);contacts=[];original=[]
+        for nid in (0,1):
+            c=dict(kind='hold',note_ids=[nid],start=2.,end=2.08,points=[[2.,.5,2/9],[2.079,.5,7/9]])
+            original.append(c);contacts+=collective_hold(g,c,2)
+        self.assertEqual(len(contacts),4)
+        contacts=merge_collective_holds(g,contacts)
+        self.assertEqual(len(contacts),2)
+        for c in original:
+            for t in g.times(c,.001):
+                zone=g.zone(c,float(t))
+                self.assertTrue(any(set(c['note_ids'])<=set(q['note_ids']) and zone.covers(Point(*q['points'][0][1:])) for q in contacts))
+
     def test_two_stacked_taps_and_a_flick_keep_two_down_contacts(self):
         from types import SimpleNamespace
         from algo.algo5 import Planner,Settings

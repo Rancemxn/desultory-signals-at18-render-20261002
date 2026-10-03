@@ -6,6 +6,14 @@ from refine_assignments import KEYS,audit,beam_assign,graph,objective
 
 
 class AssignmentTests(unittest.TestCase):
+    def test_exact_repair_removes_forbidden_pair_without_reusing_finger(self):
+        from refine_assignments import repair_topology
+        unary=np.zeros((3,3))
+        conflict=np.eye(3)*1e12
+        neighbors=[[(1,conflict),(2,conflict)],[(0,conflict),(2,conflict)],[(0,conflict),(1,conflict)]]
+        labels=repair_topology(np.array([0,0,1]),unary,neighbors)
+        self.assertEqual(len(set(labels)),3)
+
     def test_index_only_domain_survives_global_assignment(self):
         from refine_assignments import assignment_keys,descend
         contacts = [dict(start=0.,end=.08,points=[[0.,x,.5],[.079,x,.5]],

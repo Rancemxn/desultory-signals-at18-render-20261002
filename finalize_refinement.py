@@ -73,14 +73,19 @@ def main():
             raise ValueError('Inconsistent judgement time for note '+str(nid))
         judgement = judgements.pop()
         if judgement!=note.seconds:
-            if note.type!=NoteType.DRAG or abs(judgement-note.seconds)>.0155001:
-                raise ValueError('Invalid judgement timing adjustment')
-            original = dict(kind='drag',note_ids=[nid],start=note.seconds,end=note.seconds+.012)
-            if not geometry.zone(original,note.seconds,central=False).is_empty:
-                raise ValueError('Timing adjustment requires an originally invisible judgement')
+            if plan['settings'].get('judgement_windows',False):
+                from judgement_windows import check_offset
+                check_offset(note,judgement)
+            else:
+                if note.type!=NoteType.DRAG or abs(judgement-note.seconds)>.0155001:
+                    raise ValueError('Invalid judgement timing adjustment')
+                original = dict(kind='drag',note_ids=[nid],start=note.seconds,end=note.seconds+.012)
+                if not geometry.zone(original,note.seconds,central=False).is_empty:
+                    raise ValueError('Timing adjustment requires an originally invisible judgement')
         times = [judgement]
         if note.type==NoteType.HOLD:
-            times += [note.seconds+i*.001 for i in range(1,math.ceil(note.hold/.001))]
+            times += [note.seconds+i*.001 for i in range(1,math.ceil(note.hold/.001))
+                      if note.seconds+i*.001>=judgement]
         half = JUDGE_HALF_DRAG if note.type in (NoteType.DRAG,NoteType.FLICK) else JUDGE_HALF_TAP
         ratio = .5 if note.type in (NoteType.HOLD,NoteType.TAP) else .3 if note.type==NoteType.DRAG else .85
         for t in times:
@@ -104,9 +109,13 @@ def main():
                 coverage_failures.append({'note':nid,'time':t,'type':int(note.type)})
                 break
     topology = audit(contacts,plan['physical_screen'])
+    from judgement_windows import audit_sweeps
+    sweep_audit=audit_sweeps(chart,contacts)
     report = dict(notes=len(notes),contacts=len(contacts),allowed_fingers=sorted(allowed),
         fingering_objective=plan['settings'].get('fingering_objective','balanced'),
         speed_limits=plan['settings'].get('speed_limits',True),
+        judgement_windows=plan['settings'].get('judgement_windows',False),
+        continuous_sweep_audit=sweep_audit,
         used_fingers=sorted({(c['hand'],c['finger']) for c in contacts}),
         boundary_mode='aligned',tap_width_ratio=.5,hold_width_ratio=.5,drag_width_ratio=.3,
         judgement_time_adjustments=[dict(note=nid,seconds=t,offset_ms=(t-notes[int(nid)][1].seconds)*1000)

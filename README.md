@@ -44,11 +44,10 @@ Source code retains its original WTFPL license. Media belongs to its respective 
 
 # Load-only variants
 
-`DesultorySignals-AT-load` reassigns the validated V21 contact paths with the
-fatigue, repeated-press and hand-load objective. It preserves the chart,
-contact paths and 1080p60 output, and uses eight parallel bake workers and
-eight render workers. `ExoplanetaryMirage-IN-index2` uses this objective
-throughout initial planning and final assignment, with only the two index fingers.
+`EntrancetotheChaos-IN-index2` and `ExoplanetaryMirage-IN-index2` use only the
+two index fingers and the fatigue, repeated-press and hand-load objective
+throughout initial planning and final assignment. Both use eight parallel
+bake workers and eight render workers at 1080p60.
 
 For these variants, movement distance and pose preferences have zero scoring
 weight, and finger/contact/wrist speed and acceleration limits are disabled.
@@ -56,3 +55,8 @@ Contact occupancy, note coverage, blocked areas and simultaneous finger order
 remain validated. Reports record `fingering_objective: load` and
 `speed_limits: false`; disabling speed checks does not establish physical
 playability or native game AP.
+
+Both index variants allow bounded judgment-time adjustments and continuous
+Tap/Drag/Flick sweeps. Per-note offsets and a 60 Hz phase-sampling check are
+reported against the documented PhiZone Player reference model. Original
+chart timing and Hold tails are preserved; native Phigros AP is not established.

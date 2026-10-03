@@ -14,6 +14,10 @@ from contact_refinement import project
 
 
 def legal_path(g, contact, screen):
+    if contact.get('continuous_sweep'):
+        if validate_contact(g,contact,contact['points']):
+            raise ValueError(f"Invalid continuous sweep: {contact['note_ids']}")
+        return contact['points']
     extra = set()
     for attempt in range(4):
         points, report = refine_contact(g, contact, iterations=60, extra_times=extra)
@@ -128,6 +132,50 @@ def collective_hold(g, contact, max_contacts):
     return result
 
 
+def merge_collective_holds(g,contacts):
+    """Share coincident Hold heads where all original coverage duties intersect."""
+    groups={}
+    for c in contacts:
+        if not c.get('collective_hold'):continue
+        beats={round(g.notes[n][1].seconds,6) for n in c['note_ids']}
+        if len(beats)!=1:continue
+        groups.setdefault((c['start'],c['end'],tuple(beats)),[]).append(c)
+    removed=set()
+    for group in groups.values():
+        regions={}
+        for c in group:
+            region=g.screen
+            original=dict(c,collective_hold=False)
+            xy=Point(*c['points'][0][1:])
+            times=set(g.times(c,.001))
+            for nid in c['note_ids']:
+                n=g.notes[nid][1]
+                times.update(n.seconds+i*.001 for i in range(math.ceil(n.hold/.001))
+                             if c['start']<=n.seconds+i*.001<c['end'])
+            times.add(c['end']-1e-7)
+            for t in sorted(times):
+                zone=g.zone(original,float(t))
+                if zone.buffer(1e-9).covers(xy):
+                    region=region.intersection(zone)
+                else:
+                    region=region.intersection(g.zone(c,float(t)))
+                if region.is_empty:break
+            regions[id(c)]=region
+        for i,a in enumerate(group):
+            if id(a) in removed:continue
+            for b in group[i+1:]:
+                if id(b) in removed or set(a['note_ids'])&set(b['note_ids']):continue
+                region=regions[id(a)].intersection(regions[id(b)]).buffer(-2e-5)
+                if region.is_empty:continue
+                xy=project(region,a['points'][0][1:])
+                a['note_ids']=sorted(set(a['note_ids'])|set(b['note_ids']))
+                a['points']=[[a['start'],*xy],[round(a['end']-.001,3),*xy]]
+                a['shared_contact']='coincident_collective_hold'
+                regions[id(a)]=region
+                removed.add(id(b))
+    return [c for c in contacts if id(c) not in removed]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('source',type=Path)
@@ -160,6 +208,7 @@ def main():
         reports.append(dict(notes=c['note_ids'],changed=original!=c['points'],relay_contacts=len(pieces)))
         if i%100==0:
             print('GENERAL_CONTACT',i,len(plan['contacts']),flush=True)
+    contacts=merge_collective_holds(g,contacts)
     plan['contacts'] = sorted(contacts,key=lambda c:(c['start'],c['pointer']))
     args.output.parent.mkdir(parents=True,exist_ok=True)
     args.output.write_text(json.dumps(plan,indent=2))

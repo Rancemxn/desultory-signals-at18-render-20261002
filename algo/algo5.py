@@ -42,6 +42,7 @@ class Settings:
     flick_distance: float = .16
     fingering_objective: str = 'balanced'
     speed_limits: bool = True
+    judgement_windows: bool = False
 
     def __post_init__(self):
         if self.fingering_objective not in ('balanced', 'load'):
@@ -141,6 +142,7 @@ class Planner:
                 end = round((note.seconds + note.hold) * 1000) if note.type == NoteType.HOLD else (
                     beat + 45 if note.type == NoteType.FLICK else beat + 70)
                 self.tasks.append(Task(len(self.tasks), note, line, start, max(start + 1, end), beat))
+        self.original_tasks = {task.id:task for task in self.tasks}
         for i,task in enumerate(self.tasks):
             if task.note.type != NoteType.DRAG or not self.zone(task,task.start).is_empty:
                 continue
@@ -167,7 +169,7 @@ class Planner:
         return task.note.seconds
 
     def zone(self, task, ms):
-        key = (task.id, ms)
+        key = (task.id, task.note.seconds, ms)
         if key not in self.zones:
             sec = self.target_time(task, ms)
             rot = cmath.exp(1j * (task.line.angle @ sec))
@@ -241,7 +243,7 @@ class Planner:
         return result
 
     def path(self, task, seed, end, direction=1):
-        key = (task.id, task.start, tuple(round(v, 5) for v in seed), end, direction)
+        key = (task.id, task.note.seconds, task.start, tuple(round(v, 5) for v in seed), end, direction)
         if key in self.paths:
             return self.paths[key]
         times = sorted({task.start, end, task.beat, *range(task.start, end, self.settings.sample_ms)})
@@ -374,7 +376,7 @@ class Planner:
         samples. Search the actual judgement corridor rather than treating that
         one failed trajectory as an impossible note.
         """
-        key = (task.id,end)
+        key = (task.id,task.note.seconds,task.start,end)
         if key in self.corridor_paths:
             return self.corridor_paths[key]
         from contact_refinement import ContactGeometry, refine_contact, route_contact, validate_contact
@@ -386,8 +388,7 @@ class Planner:
             points.append([ms/1000,center.real/self.screen.width,center.imag/self.screen.height])
         contact = dict(kind=task.note.type.name.lower(),note_ids=[task.id],start=task.start/1000,
                        end=(end+1)/1000,beat=task.beat/1000,points=points)
-        if task.id in self.judgement_times:
-            contact['judgement_times']={str(task.id):self.judgement_times[task.id]}
+        contact.update(self.timing_metadata(task))
         result = None
         extra = set()
         for solver in (refine_contact,route_contact):
@@ -470,8 +471,7 @@ class Planner:
                                   beat=task.beat / 1000, burst_cost=burst_cost,
                                   effort=.018 if task.note.type == NoteType.DRAG else .055,
                                   planned=True)
-                    if task.id in self.judgement_times:
-                        record['judgement_times']={str(task.id):self.judgement_times[task.id]}
+                    record.update(self.timing_metadata(task))
                     if effective_end != end:
                         record['terminal_hold_release_ms'] = (task.note.seconds+task.note.hold-record['end'])*1000
                         record['terminal_hold_release_reason'] = 'empty legal zone within final 20 ms'
@@ -520,7 +520,20 @@ class Planner:
     def run(self, console=None):
         beam = [State()]
         drag_representatives = {}
+        swept=set()
         for index, task in enumerate(self.tasks):
+            if task.id in swept:
+                continue
+            if self.settings.judgement_windows and self.settings.fingers==('index',):
+                from chord_sweep import outward_group,sweep_states
+                group=outward_group(self,task)
+                if group:
+                    states=[new for state in beam for new in sweep_states(self,group,state)]
+                    if states:
+                        beam=sorted(states,key=lambda s:s.score)[:self.settings.beam_width]
+                        swept.update(t.id for t in group[-1])
+                        if console:console.print(f'OUTWARD_SWEEP {task.beat/1000:.3f}s notes={len(group[-1])}')
+                        continue
             # Exact stacked Drags share one continuous touch. Keep every note ID,
             # but do not demand an additional anatomical finger for each copy.
             # Same line/time/offset guarantees the entire moving path is identical.
@@ -550,6 +563,10 @@ class Planner:
                     if not self.settings.speed_limits:
                         expanded.extend(self.flick_after_hold(task,state))
             if not expanded:
+                if self.settings.judgement_windows:
+                    for state in beam:
+                        expanded.extend(self.window_choices(task,state))
+            if not expanded:
                 raise PlanningError(f'No feasible handcam fingering for note {task.id} at {task.beat / 1000:.3f}s; '
                                     f'rejections: {dict(self.rejected)}')
             expanded.sort(key=lambda n: n.score)
@@ -567,6 +584,50 @@ class Planner:
                 console.print(f'algo5: {index + 1}/{len(self.tasks)} notes, {len(beam)} candidates')
         return list(min(beam, key=lambda n: n.score).contacts)
 
+    def timing_metadata(self,task):
+        original=self.original_tasks[task.id].note.seconds
+        if abs(task.note.seconds-original)<1e-9:
+            return {}
+        return dict(judgement_times={str(task.id):task.note.seconds},
+                    judgement_time_reason='bounded_window' if self.settings.judgement_windows else 'invisible_drag')
+
+    def window_choices(self,task,state):
+        """Try free-finger times inside the documented judgment windows.
+
+        Every candidate keeps the original chart and Hold tail. The exported
+        note-time mapping is validated again against the original chart.
+        """
+        from judgement_windows import PLANNING_WINDOW_MS
+        original=self.original_tasks[task.id]
+        limit=PLANNING_WINDOW_MS[task.note.type]
+        origin=original.note.seconds
+        last={}
+        for c in state.contacts:
+            key=(c['hand'],c['finger'])
+            last[key]=max(last.get(key,0.),c['end'])
+        beats={round(origin*1000)+delta for delta in range(5,limit+1,5)}
+        for end in last.values():
+            # Separate UP and the next DOWN, and retain 25 ms of Flick approach.
+            beats.add(math.ceil((end+.002)*1000)+(25 if task.note.type==NoteType.FLICK else 0))
+        result=[]
+        for beat in sorted(beats,key=lambda t:abs(t/1000-origin)):
+            if abs(beat/1000-origin)>limit/1000+1e-9 or beat==task.beat:
+                continue
+            start=beat-25 if task.note.type==NoteType.FLICK else beat
+            end=original.end if task.note.type==NoteType.HOLD else beat+(45 if task.note.type==NoteType.FLICK else 70)
+            if end<=start:
+                continue
+            note=Note(task.note.type,beat/1000,
+                      max(0.,origin+original.note.hold-beat/1000) if task.note.type==NoteType.HOLD else task.note.hold,
+                      task.note.offset)
+            candidate=Task(task.id,note,task.line,start,end,beat)
+            for cost,c in self.choices(candidate,state,degraded=True):
+                ordered=tuple(sorted((*state.contacts,c),key=lambda old:(old['start'],old['pointer'])))
+                result.append(State(ordered,state.score+cost))
+            if result:
+                break
+        return result
+
     def flick_after_hold(self, task, state):
         """A completed Hold may release at its tail before a same-beat Flick.
 
@@ -576,7 +637,7 @@ class Planner:
         if task.note.type!=NoteType.FLICK or task.start>=task.beat:
             return []
         result=[]
-        notes={item.id:item.note for item in self.tasks}
+        notes={nid:item.note for nid,item in self.original_tasks.items()}
         for index,old in enumerate(state.contacts):
             if old['kind']!='hold' or not task.start/1000<old['end']<=task.beat/1000+.0011:
                 continue

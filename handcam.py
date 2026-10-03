@@ -239,6 +239,8 @@ def main(argv=None):
     parser.add_argument('--fingering-objective', choices=('balanced','load'), default='balanced')
     parser.add_argument('--no-speed-limits', action='store_true',
                         help='Disable finger/contact/wrist speed and acceleration feasibility limits')
+    parser.add_argument('--judgement-windows',action='store_true',
+                        help='Allow bounded note-time offsets to resolve finger occupancy')
     parser.add_argument('--strict-psap', action='store_true', help='display every raw contact, including redundant overlaps')
     parser.add_argument('--algorithm', type=int, choices=(1, 2, 3, 4, 5), default=1,
                         help='existing planner; algo1 usually releases idle contacts sooner (default: 1)')
@@ -362,7 +364,8 @@ def main(argv=None):
                 algorithm = importlib.import_module(f'algo.algo{args.algorithm}')
                 if args.algorithm == 5:
                     options = dict(fingering_objective=args.fingering_objective,
-                                   speed_limits=not args.no_speed_limits)
+                                   speed_limits=not args.no_speed_limits,
+                                   judgement_windows=args.judgement_windows)
                     if args.fingers:
                         options['fingers'] = tuple(args.fingers)
                     settings = algorithm.Settings(**options)

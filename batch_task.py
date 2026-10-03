@@ -23,17 +23,18 @@ CHARTS = {
     'OblivionPHIN': 'IN',
     'EntrancetotheChaos-IN-index2': 'IN',
     'ExoplanetaryMirage-IN-index2': 'IN',
-    'DesultorySignals-AT-load': 'AT',
 }
 
 
 def configuration(key):
-    special = key=='DesultorySignals-AT-load'
-    load_only = special or key=='ExoplanetaryMirage-IN-index2'
-    return dict(source_key='desultory-signals' if special else key.removesuffix('-IN-index2'),
-                title='Desultory Signals' if special else 'ハテ' if key=='Hate' else key.removesuffix('-IN-index2'),
-                input_release='render-inputs' if special else 'batch-inputs-v1',
+    if key not in CHARTS:
+        raise ValueError('Unknown chart: '+key)
+    load_only = key.endswith('-IN-index2')
+    return dict(source_key=key.removesuffix('-IN-index2'),
+                title='ハテ' if key=='Hate' else key.removesuffix('-IN-index2'),
+                input_release='batch-inputs-v1',
                 fingering_objective='load' if load_only else 'balanced',speed_limits=not load_only,
+                judgement_windows=load_only,
                 allowed_fingers=['index'] if key.endswith('-IN-index2') else ['index','middle','ring','thumb','little'])
 
 
@@ -60,8 +61,6 @@ def prepare(key):
     frames = math.ceil(float(media['format']['duration'])*60)
     meta = dict(key=key,**config,level=level,frames=frames,duration=frames/60,
                 source_sha256=hashlib.sha256(source.read_bytes()).hexdigest(),parts=list(range(8)))
-    if key=='DesultorySignals-AT-load':
-        meta['level']='AT 18'
     Path('output/batch.json').write_text(json.dumps(meta,indent=2))
     output = os.environ.get('GITHUB_OUTPUT')
     if output:
@@ -80,7 +79,8 @@ def common(meta):
         '--title',meta['title'],'--level',meta['level'],'--width',1920,'--height',1080,'--fps',60,
         '--fingers',*meta.get('allowed_fingers',['index','middle','ring','thumb','little']),
         '--fingering-objective',meta.get('fingering_objective','balanced'),
-        *([] if meta.get('speed_limits',True) else ['--no-speed-limits'])]
+        *([] if meta.get('speed_limits',True) else ['--no-speed-limits']),
+        *(['--judgement-windows'] if meta.get('judgement_windows',False) else [])]
 
 
 def planning_stage(name, args):
@@ -111,40 +111,21 @@ def planning_stage(name, args):
 
 def plan(key):
     meta = prepare(key)
-    if key=='DesultorySignals-AT-load':
-        run(['gh','release','download','refined-plan-v21','--pattern','motion-plan.json',
-             '--dir','output/base','--clobber'])
-        source = Path('output/base/motion-plan.json')
-        original = source.read_bytes()
-        baseline = json.loads(original)
-        baseline['settings'].update(fingering_objective='load',speed_limits=False)
-        baseline['assignment_source'] = dict(release='refined-plan-v21',sha256=hashlib.sha256(original).hexdigest(),
-                                            preserved_contact_paths=True)
-        Path('output/rules').mkdir(parents=True,exist_ok=True)
-        Path('output/rules/merged.json').write_text(json.dumps(baseline,indent=2))
-        Path('output/rules/general-rules.json').write_text(json.dumps(baseline['assignment_source'],indent=2))
-    else:
-        planning_stage('initial-fingering',common(meta)+['--full','--plan-only','--output','output/base'])
-        planning_stage('contact-paths',[sys.executable,'-u','general_refinement.py','output/base/motion-plan.json','inputs/selected.zip','output/rules/motion-plan.json'])
-        planning_stage('shared-drags',[sys.executable,'-u','merge_shared_drags.py','output/rules/motion-plan.json','inputs/selected.zip','output/rules/merged.json'])
+    planning_stage('initial-fingering',common(meta)+['--full','--plan-only','--output','output/base'])
+    planning_stage('contact-paths',[sys.executable,'-u','general_refinement.py','output/base/motion-plan.json','inputs/selected.zip','output/rules/motion-plan.json'])
+    planning_stage('shared-drags',[sys.executable,'-u','merge_shared_drags.py','output/rules/motion-plan.json','inputs/selected.zip','output/rules/merged.json'])
     planning_stage('assignment',[sys.executable,'-u','refine_assignments.py','output/rules/merged.json','output/assigned','--beam',96])
-    if key=='DesultorySignals-AT-load':
-        shutil.copyfile('output/assigned/assigned-motion-plan.json','output/rules/spaced.json')
-    else:
-        planning_stage('contact-spacing',[sys.executable,'-u','spread_contacts.py','output/assigned/assigned-motion-plan.json','inputs/selected.zip','output/rules/spaced.json'])
-    if key=='DesultorySignals-AT-load':
-        Path('output/assigned-final').mkdir(parents=True,exist_ok=True)
-        for name in ('assigned-motion-plan.json','assignment-refinement.json'):
-            shutil.copyfile(Path('output/assigned')/name,Path('output/assigned-final')/name)
-    else:
-        planning_stage('final-assignment',[sys.executable,'-u','refine_assignments.py','output/rules/spaced.json','output/assigned-final','--beam',96])
+    planning_stage('contact-spacing',[sys.executable,'-u','spread_contacts.py','output/assigned/assigned-motion-plan.json','inputs/selected.zip','output/rules/spaced.json'])
+    planning_stage('final-assignment',[sys.executable,'-u','refine_assignments.py','output/rules/spaced.json','output/assigned-final','--beam',96])
     planning_stage('validation',[sys.executable,'-u','finalize_refinement.py','output/assigned-final/assigned-motion-plan.json','inputs/selected.zip','output/plan'])
 
 
 def resume_plan(key):
     previous = metadata()
     meta = prepare(key)
-    for field in ('key','level','source_sha256','fingering_objective','speed_limits'):
+    for field in ('key','level','source_sha256','fingering_objective','speed_limits','judgement_windows'):
+        if field=='judgement_windows' and field not in previous:
+            previous[field]=False
         if field not in previous and field in ('fingering_objective','speed_limits'):
             previous[field] = 'balanced' if field=='fingering_objective' else True
         if previous[field] != meta[field]:
@@ -253,7 +234,7 @@ def assemble():
     assert [p['blend_sha256'] for p in provenance]==[p['blend_sha256'] for p in seams['bakes']]
     listing = delivery/'concat.txt'
     listing.write_text(''.join(f"file '{p.name}'\n" for p in videos))
-    name = meta['key'] if meta['key'].endswith(('-IN-index2','-AT-load')) else f"{meta['key']}-{meta['level']}"
+    name = meta['key'] if meta['key'].endswith('-IN-index2') else f"{meta['key']}-{meta['level']}"
     target = delivery/f"{name}-1080p60.mp4"
     run(['ffmpeg','-v','error','-y','-f','concat','-safe',0,'-i',listing,'-i',delivery/'audio.wav',
         '-map','0:v:0','-map','1:a:0','-c:v','copy','-c:a','aac','-b:a','192k','-t',meta['duration'],'-movflags','+faststart',target])

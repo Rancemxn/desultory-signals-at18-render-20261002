@@ -9,7 +9,7 @@ class BatchIntervalsTests(unittest.TestCase):
         first,second = LANES['index2']
         self.assertEqual(next_chart(state,[]),first)
         busy = [{'displayTitle':first+' general 1080p60','status':'in_progress'}]
-        self.assertEqual(next_chart(state,busy),'DesultorySignals-AT-load')
+        self.assertEqual(next_chart(state,busy),'ExoplanetaryMirage')
         state['charts'][first]={'run':2,'status':'downloaded'}
         self.assertEqual(next_chart(state,[]),second)
         both = busy+[{'displayTitle':'Hate general 1080p60','status':'queued'}]

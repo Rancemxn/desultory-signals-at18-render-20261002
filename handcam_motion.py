@@ -190,7 +190,7 @@ def attach_plan(content, contacts, plan, time_offset=0.):
                 or any(a[0] != b[0] + time_offset or a[1:] != b[1:]
                        for a, b in zip(source['points'], record['points']))):
             raise ValueError('Motion plan lifecycle/trajectory differs from PSAP')
-        if source['end'] <= source['start'] or occupied.get(key, -math.inf) >= source['start']:
+        if source['end'] <= source['start'] or occupied.get(key, -math.inf) > source['start']+1e-9:
             raise ValueError('Motion plan overlaps or fails to release a physical finger')
         occupied[key] = source['end']
         merged = copy.deepcopy(record)

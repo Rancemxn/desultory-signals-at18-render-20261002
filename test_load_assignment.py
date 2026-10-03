@@ -117,14 +117,15 @@ class LoadAssignmentTests(unittest.TestCase):
 
     def test_task_modes_are_isolated(self):
         from batch_task import configuration,common
-        for key in ('DesultorySignals-AT-load','ExoplanetaryMirage-IN-index2'):
+        for key in ('EntrancetotheChaos-IN-index2','ExoplanetaryMirage-IN-index2'):
             c=configuration(key)
             self.assertEqual(c['fingering_objective'],'load')
             self.assertFalse(c['speed_limits'])
             self.assertIn('--no-speed-limits',common(dict(c,level='IN')))
+            self.assertIn('--judgement-windows',common(dict(c,level='IN')))
         self.assertEqual(configuration('ExoplanetaryMirage-IN-index2')['allowed_fingers'],['index'])
         self.assertTrue(configuration('ExoplanetaryMirage')['speed_limits'])
-        self.assertEqual(configuration('EntrancetotheChaos-IN-index2')['fingering_objective'],'balanced')
+        with self.assertRaises(ValueError):configuration('DesultorySignals-AT-load')
 
 
 if __name__=='__main__':unittest.main()

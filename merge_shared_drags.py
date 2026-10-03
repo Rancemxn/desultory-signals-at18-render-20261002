@@ -23,6 +23,7 @@ def main():
         if not all(g.notes[n][1].type==NoteType.DRAG for n in c['note_ids']):continue
         choices=[]
         for owner in contacts:
+            if owner.get('collective_hold') or owner.get('continuous_sweep'):continue
             if owner is c or owner['start']>c['start']+1e-8 or owner['end']<c['end']-1e-8:continue
             distance,t=closest(c,owner,plan['physical_screen'])
             if distance>.02:continue

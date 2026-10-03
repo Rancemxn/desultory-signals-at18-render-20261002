@@ -51,6 +51,7 @@ def main():
             if closest(a,b,screen)[0]>=.020:continue
             options=[]
             for c in sorted((a,b),key=lambda c:(c.get('manual_role') is not None,c['end']-c['start'])):
+                if c.get('collective_hold') or c.get('continuous_sweep'):continue
                 if c.get('refinement_start') is not None or c.get('refinement_end') is not None:continue
                 if c.get('manual_role')=='84-89 s two-hand hold relay':continue
                 others=[o for o in contacts if o is not c and o['start']<c['end'] and c['start']<o['end']]

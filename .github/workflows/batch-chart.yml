@@ -6,7 +6,7 @@ on:
       chart:
         required: true
         type: choice
-        options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate, OblivionPHIN, EntrancetotheChaos-IN-index2, ExoplanetaryMirage-IN-index2, DesultorySignals-AT-load]
+        options: [AboutTheUniverse, TrueHomeTrueWorldRework, Implexrough, EntrancetotheChaos, ExoplanetaryMirage, Hate, OblivionPHIN, EntrancetotheChaos-IN-index2, ExoplanetaryMirage-IN-index2]
       plan_run:
         description: Optional prior run whose validated plan should be reused
         required: false
@@ -75,6 +75,7 @@ jobs:
           config=configuration(os.environ['CHART'])
           assert meta.get('fingering_objective','balanced')==config['fingering_objective']
           assert meta.get('speed_limits',True)==config['speed_limits']
+          assert meta.get('judgement_windows',False)==config['judgement_windows']
           report=json.loads(Path('output/plan/refinement-validation.json').read_text())
           assert not report['geometry_failures'] and not report['note_coverage_failures']
           assert not report['topology']['finger_overlaps'] and not report['topology']['same_hand_crossings']

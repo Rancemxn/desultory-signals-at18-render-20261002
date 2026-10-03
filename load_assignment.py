@@ -24,7 +24,8 @@ def score_labels(contacts, keys, options, labels):
         previous = next((old for old in reversed(history) if (old['hand'],old['finger'])==(hand,finger)),None)
         cps = 0. if previous is None else 1/max(.001,t-previous['start'])
         comfort = COMFORT[finger]*(1-.3*f-.15*hf)
-        c['burst_cost'] = .1*max(0.,cps/comfort-1) if c['kind']=='tap' else 0.
+        kind=c.get('load_kind',c['kind'])
+        c['burst_cost'] = .1*max(0.,cps/comfort-1) if kind=='tap' else 0.
         c['effort'] = .018 if c['kind']=='drag' else .055
         af,ab = load_at(history,end,hand,finger,settings)
         ownf,ownb = load_at([c],end,hand,finger,settings)
@@ -33,7 +34,7 @@ def score_labels(contacts, keys, options, labels):
                      burst=2*c['burst_cost']+.2*(1-ab),hand=.6*hf+.3*(1-hb),
                      preference=0.,movement=0.,posture=0.,visual=0.,side=0.,habit=0.,degraded=0.)
         limit = PEAK[finger]*(.65+.35*b)*(1-.2*hf)
-        degraded = ['burst_capacity'] if c['kind'] in ('tap','hold') and cps>limit else []
+        degraded = ['burst_capacity'] if kind in ('tap','hold') and cps>limit else []
         decisions.append(dict(costs=costs,fatigue_before=f,fatigue_after=af,
             burst_before=b,burst_after=ab,hand_fatigue=hf,finger_cps=cps,
             effort=c['effort'],burst_cost=c['burst_cost'],degraded=degraded))
@@ -76,7 +77,7 @@ def assign_load(contacts, keys, options, neighbors, width=96):
             hb[:,mask] = np.maximum(0.,1-.55*debt[:,mask].sum(axis=1))[:,None]
         cps = 1/np.maximum(.001,t-last_start)
         comfort = comforts[None,:]*(1-.3*f-.15*hf)
-        burst = .1*np.maximum(0.,cps/comfort-1) if c['kind']=='tap' else np.zeros_like(f)
+        burst = .1*np.maximum(0.,cps/comfort-1) if c.get('load_kind',c['kind'])=='tap' else np.zeros_like(f)
         effort = .018 if c['kind']=='drag' else .055
         future = advance(fatigue,t,end,contacts,active,histories,settings.fatigue_seconds)
         # Match the existing sum of separately clamped prior/own loads.
