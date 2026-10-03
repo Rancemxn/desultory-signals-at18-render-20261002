@@ -11,6 +11,10 @@ on:
         description: Optional prior run whose validated plan should be reused
         required: false
         type: string
+      bake_run:
+        description: Optional prior run whose eight completed bakes should be reused
+        required: false
+        type: string
 permissions:
   contents: write
 concurrency:
@@ -85,6 +89,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/runtime
+        if: ${{ inputs.bake_run == '' }}
       - uses: actions/download-artifact@v4
         with:
           name: planning
@@ -94,6 +99,27 @@ jobs:
           name: selected-chart
           path: inputs
       - run: python -u batch_task.py bake ${{ matrix.part }}
+        if: ${{ inputs.bake_run == '' }}
+      - uses: actions/download-artifact@v4
+        if: ${{ inputs.bake_run != '' }}
+        with:
+          name: baked-${{ matrix.part }}
+          path: output/part${{ matrix.part }}
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.bake_run }}
+      - if: ${{ inputs.bake_run != '' }}
+        env:
+          PART: ${{ matrix.part }}
+        run: |
+          python - <<'PY'
+          import hashlib,json,os
+          from pathlib import Path
+          p=Path('output')/('part'+os.environ['PART'])
+          provenance=json.loads((p/'provenance.json').read_text())
+          assert provenance['plan_sha256']==hashlib.sha256(Path('output/plan/motion-plan.json').read_bytes()).hexdigest()
+          with (p/'handcam.blend').open('rb') as f:
+              assert provenance['blend_sha256']==hashlib.file_digest(f,'sha256').hexdigest()
+          PY
       - uses: actions/upload-artifact@v4
         if: always()
         with:

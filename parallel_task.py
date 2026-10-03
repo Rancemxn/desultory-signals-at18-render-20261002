@@ -83,7 +83,8 @@ def audit(source):
     merged.update(contact_samples=sum(d['contact_samples'] for d in diagnostics),
         max_error_mm=max(d['max_error_mm'] for d in diagnostics),
         max_collision_depth_mm=max(d['max_collision_depth_mm'] for d in diagnostics),
-        min_screen_clearance_mm=min(d['min_screen_clearance_mm'] for d in diagnostics),
+        min_screen_clearance_mm=min((d['min_screen_clearance_mm'] for d in diagnostics
+                                    if d['min_screen_clearance_mm'] is not None),default=None),
         source='eight disjoint rendered intervals; clearance also includes retained join frames')
     (out/'diagnostics.json').write_text(json.dumps(merged,indent=2))
     reports = [json.loads(p.with_name('pose-numeric.json').read_text()) for p in paths]
