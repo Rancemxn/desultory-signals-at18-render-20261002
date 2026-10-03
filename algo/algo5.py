@@ -119,6 +119,7 @@ class Planner:
         self.screen_poly = box(w * .01, h * .01, w * .99, h * .99)
         self.pause_poly = box(0, 0, w * .1, h * .1).union(box(w * .9, 0, w, h * .1))
         self.zones, self.paths = {}, {}
+        self.corridor_paths = {}
         self.rejected = Counter()
         self.tasks = []
         for line in chart.lines:
@@ -341,6 +342,43 @@ class Planner:
                         posture = max(posture, .5)
         return sorted(set(violations)), movement, posture
 
+    def corridor_path(self, task, end):
+        """Route a sustained contact through its legal band if center tracking fails.
+
+        A moving obstacle can cut the direct line between legal center-following
+        samples. Search the actual judgement corridor rather than treating that
+        one failed trajectory as an impossible note.
+        """
+        key = (task.id,end)
+        if key in self.corridor_paths:
+            return self.corridor_paths[key]
+        from contact_refinement import ContactGeometry, refine_contact, route_contact, validate_contact
+        geometry = ContactGeometry(self.chart,physical_screen=self.physical,extra_clearance_m=.004)
+        times = sorted({task.start,end,*range(task.start,end,self.settings.sample_ms)})
+        points = []
+        for ms in times:
+            center = task.line.pos(self.target_time(task,ms),task.note.offset)
+            points.append([ms/1000,center.real/self.screen.width,center.imag/self.screen.height])
+        contact = dict(kind=task.note.type.name.lower(),note_ids=[task.id],start=task.start/1000,
+                       end=(end+1)/1000,beat=task.beat/1000,points=points)
+        result = None
+        extra = set()
+        for solver in (refine_contact,route_contact):
+            for attempt in range(3):
+                candidate,_ = (solver(geometry,contact,extra_times=extra) if solver is refine_contact
+                               else solver(geometry,contact,self.physical,extra_times=extra))
+                if candidate is None:
+                    break
+                bad = validate_contact(geometry,contact,candidate,limit=100)
+                if not bad and not self.blocks.path_violations(candidate,contact['start'],contact['end']):
+                    result = candidate
+                    break
+                extra.update(bad)
+            if result is not None:
+                break
+        self.corridor_paths[key] = result
+        return result
+
     def choices(self, task, state, degraded=False):
         result = []
         t = task.start / 1000
@@ -375,6 +413,8 @@ class Planner:
                 directions = (1, -1, 2, -2) if task.note.type == NoteType.FLICK else (1,)
                 for direction in directions:
                     points = self.path(task, seed, end, direction)
+                    if points is None and task.note.type in (NoteType.HOLD,NoteType.DRAG):
+                        points = self.corridor_path(task,end)
                     if points is None:
                         self.rejected['judge_geometry'] += 1
                         continue

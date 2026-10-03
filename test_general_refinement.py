@@ -6,6 +6,24 @@ from contact_refinement import ContactGeometry, validate_contact
 
 
 class GeneralRulesTests(unittest.TestCase):
+    def test_planner_corridor_preserves_block_legality(self):
+        from algo.algo5 import Planner,Settings
+        from handcam_motion import default_profile
+        from block_area import BlockAreas
+        from test_block_area import area
+        chart,_ = fixture(NoteType.HOLD,[8.],[2.],.5)
+        chart.block_areas = BlockAreas([area((.40,.40),(.60,.60))])
+        planner = Planner(chart,Settings(),default_profile())
+        task = planner.tasks[0]
+        path = planner.corridor_path(task,task.end)
+        self.assertIsNotNone(path)
+        self.assertFalse(chart.block_areas.path_violations(path,2.,2.501))
+        c = dict(kind='hold',note_ids=[0],start=2.,end=2.501)
+        self.assertFalse(validate_contact(ContactGeometry(chart,extra_clearance_m=.004),c,path))
+        chart.block_areas = BlockAreas([area((0.,0.),(1.,1.))])
+        planner = Planner(chart,Settings(),default_profile())
+        self.assertIsNone(planner.corridor_path(planner.tasks[0],planner.tasks[0].end))
+
     def test_travelling_relay_has_continuous_coverage(self):
         c = dict(kind='hold',note_ids=[91],start=10.,end=16.,points=[[10.,.1,.5],[15.999,.9,.5]])
         pieces = relay(c,(.28,.1575))
